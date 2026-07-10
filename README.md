@@ -19,6 +19,11 @@ Der Fehlerbericht schlägt pro Fehler automatisch einen Fix vor:
 Der Zielpunkt ist in der Zoom-Grafik **grün markiert** (mit Pfeilen von den
 alten Punkten), bevor man klickt.
 
+**Layer wählen:** Es werden immer alle Layer exportiert und geprüft. Im Report
+gibt es oben eine **Layer-Filterleiste** (Checkbox je Layer mit Fehleranzahl,
+plus „alle"/„keine") – damit blendet man Layer live ein/aus, ohne neu zu
+exportieren. Der „offen"-Zähler zählt nur die eingeblendeten Layer.
+
 ---
 
 ## Einmalige Einrichtung

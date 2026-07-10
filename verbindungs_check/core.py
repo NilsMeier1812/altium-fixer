@@ -588,7 +588,7 @@ def _error_block(e, group_lines, idx, server_mode):
 
     data_fix = f' data-fix-id="{esc(e["fix_id"])}"' if server_mode else ''
 
-    return f'''<div class="err" data-dist="{d:.5f}" data-overlap="{e["overlap"]:.2f}"{data_fix}>
+    return f'''<div class="err" data-dist="{d:.5f}" data-overlap="{e["overlap"]:.2f}" data-layer="{esc(layer)}"{data_fix}>
   <div class="search">
     <code>{esc(search)}</code>
     <button onclick="cp(this)">Kopieren</button>
@@ -671,6 +671,26 @@ def build_html(real_errors, overlaps, group_lines, stats, filename,
             '<span class="badge" id="openCount" style="margin-left:8px"></span></div>'
         )
 
+    # Layer-Filterleiste: pro vorkommendem Layer eine Checkbox (Anzahl Fehler).
+    layerbar = ''
+    if real_errors or overlaps:
+        from collections import Counter
+        counts = Counter(e["layer"] for e in list(real_errors) + list(overlaps))
+        chks = []
+        for layer in sorted(counts):
+            chks.append(
+                '<label class="laychk"><input type="checkbox" class="layerbox" '
+                f'value="{esc(layer)}" checked onchange="applyFilter()"> '
+                f'{esc(layer)} <span class="laycount">({counts[layer]})</span></label>'
+            )
+        layerbar = (
+            '<div class="layerbar">Layer:'
+            '<button class="laytoggle" onclick="allLayers(true)">alle</button>'
+            '<button class="laytoggle" onclick="allLayers(false)">keine</button>'
+            + ''.join(chks) +
+            '</div>'
+        )
+
     style = _STYLE
     script = _script(server_mode)
 
@@ -693,6 +713,7 @@ def build_html(real_errors, overlaps, group_lines, stats, filename,
     Ueberlappungen: <b>{len(overlaps)}</b></div>
 </header>
 {sortbar}
+{layerbar}
 <main>
 {body}
 </main>
@@ -721,6 +742,17 @@ _STYLE = """
     .modebadge { font-size: 12px; padding: 3px 9px; border-radius: 10px;
                  background: #eef0f3; color: #5f6b7c; margin-left: 14px; }
     .modebadge.live { background: #1a7f37; color: #fff; }
+    .layerbar { position: sticky; top: 41px; z-index: 4; background: #fbfbfc;
+                border-bottom: 1px solid #e3e6ea; padding: 8px 24px;
+                font-size: 13px; color: #5f6b7c; display: flex; gap: 10px;
+                align-items: center; flex-wrap: wrap; }
+    .laychk { display: inline-flex; align-items: center; gap: 4px;
+              background: #fff; border: 1px solid #e3e6ea; border-radius: 6px;
+              padding: 3px 9px; cursor: pointer; color: #384250; }
+    .laycount { color: #97a1af; }
+    .laytoggle { border: 1px solid #c9ced6; background: #fff; border-radius: 6px;
+                 padding: 3px 9px; cursor: pointer; font-size: 12px; color: #384250; }
+    .laytoggle:hover { background: #eef0f3; }
     main { max-width: 1040px; margin: 0 auto; padding: 20px 16px 60px; }
     .err { background: #fff; border: 1px solid #e3e6ea; border-radius: 10px;
            padding: 16px 18px; margin: 0 0 18px; transition: opacity .15s; }
@@ -820,17 +852,37 @@ def _script(server_mode):
       err.querySelector('.badge').textContent = next ? LABEL[next] : '';
       applyFilter(); updateCounts();
     }
+    function enabledLayers(){
+      var set = {};
+      document.querySelectorAll('.layerbox').forEach(function(cb){
+        if (cb.checked) set[cb.value] = true;
+      });
+      return set;
+    }
+    function allLayers(on){
+      document.querySelectorAll('.layerbox').forEach(function(cb){ cb.checked = on; });
+      applyFilter();
+    }
     function applyFilter(){
       var hide = document.getElementById('hideDone');
       hide = hide && hide.checked;
+      var lay = enabledLayers();
       document.querySelectorAll('.err').forEach(function(e){
         var handled = !!e.getAttribute('data-state');
-        e.style.display = (hide && handled) ? 'none' : '';
+        var layerOff = !lay[e.getAttribute('data-layer')];
+        e.style.display = ((hide && handled) || layerOff) ? 'none' : '';
       });
+      updateCounts();
     }
     function updateCounts(){
-      var all = document.querySelectorAll('.err').length;
-      var done = document.querySelectorAll('.err[data-state="ignored"], .err[data-state="fixed"]').length;
+      // nur per Layer sichtbare Bloecke zaehlen
+      var lay = enabledLayers();
+      var all = 0, done = 0;
+      document.querySelectorAll('.err').forEach(function(e){
+        if (!lay[e.getAttribute('data-layer')]) return;
+        all++;
+        if (e.getAttribute('data-state')) done++;
+      });
       var el = document.getElementById('openCount');
       if (el) el.textContent = (all - done) + ' / ' + all + ' offen';
     }
