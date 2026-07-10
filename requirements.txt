@@ -1,0 +1,4 @@
+# Nur fuer den Excel-Modus (check_excel.py) noetig.
+# Der Altium-Live-Modus (check_server.py) laeuft mit reiner Standardbibliothek.
+pandas
+openpyxl

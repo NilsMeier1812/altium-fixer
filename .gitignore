@@ -1,0 +1,10 @@
+# generierte Reports und Temp-Dateien
+*_check_report.html
+tracks.json
+tracks.json.port
+*.port
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
