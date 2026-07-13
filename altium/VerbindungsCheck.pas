@@ -25,6 +25,10 @@
 var
   LastWorkDir : String;   // gemerkter Ordner (Vorbelegung fuer die naechste Abfrage)
 
+const
+  MAX_ITER = 1000000;     // Not-Bremse: bricht ab, falls der Iterator nicht endet
+                          // (bei ~10k Tracks/s entspricht das ca. 100 s Obergrenze)
+
 
 {------------------------------------------------------------------------------}
 { Locale-unabhaengige Zahl <-> String Umwandlung                               }
@@ -61,6 +65,21 @@ begin
     if (c = '.') or (c = ',') then t := t + sep else t := t + c;
   end;
   Result := StrToFloatDef(t, 0);
+end;
+
+// Wie DotFloat, aber mit vorgegebenem Separator (spart je Zahl ein FloatToStr
+// zur Separator-Erkennung - bei zehntausenden Tracks spuerbar schneller).
+function DotFloatS(x : Double; const sep : String) : String;
+var s, c, r : String; i : Integer;
+begin
+  s := FloatToStr(x);
+  r := '';
+  for i := 1 to Length(s) do
+  begin
+    c := Copy(s, i, 1);
+    if c = sep then r := r + '.' else r := r + c;
+  end;
+  Result := r;
 end;
 
 
@@ -166,10 +185,11 @@ var
   Iter    : IPCB_BoardIterator;
   Trk     : IPCB_Track;
   sl      : TStringList;
-  netName, layName, line : String;
+  netName, layName, line, sep : String;
   x1, y1, x2, y2, wd : Double;
-  first   : Boolean;
-  id, cnt : Integer;
+  ox, oy  : TCoord;
+  first, runaway : Boolean;
+  id, skipped, iterated : Integer;
 begin
   Board := GetBoard;
   if Board = nil then Exit;
@@ -185,6 +205,16 @@ begin
   if FileExists(CmdPath) then DeleteFile(CmdPath);
   if FileExists(AckPath) then DeleteFile(AckPath);
 
+  ShowMessage('Lese jetzt die Tracks (ohne Top- und Bottom-Layer).' +
+    #13#10#13#10 + 'Bei grossen Boards kann das bis zu ~1-2 Minuten dauern - ' +
+    'Altium reagiert solange NICHT. Das ist normal, bitte NICHT abbrechen ' +
+    'und nicht ueber den Task-Manager schliessen.');
+
+  // Einmalig cachen (nicht pro Track neu lesen -> deutlich schneller).
+  sep := DecSep;
+  ox  := Board.XOrigin;
+  oy  := Board.YOrigin;
+
   sl := TStringList.Create;
   sl.Add('{');
   sl.Add('  "document": "' + JsonEscape(Board.FileName) + '",');
@@ -195,55 +225,84 @@ begin
   Iter.AddFilter_LayerSet(AllLayers);
   Iter.AddFilter_Method(eProcessAll);
 
-  first := True;
-  id := 0;
+  first    := True;
+  id       := 0;
+  skipped  := 0;
+  iterated := 0;
+  runaway  := False;
   Trk := Iter.FirstPCBObject;
   while Trk <> nil do
   begin
-    if Trk.Net <> nil then netName := Trk.Net.Name else netName := '';
-    layName := Board.LayerName(Trk.Layer);
+    iterated := iterated + 1;
+    if iterated > MAX_ITER then begin runaway := True; Break; end;
 
-    x1 := CoordToMMs(Trk.X1 - Board.XOrigin);
-    y1 := CoordToMMs(Trk.Y1 - Board.YOrigin);
-    x2 := CoordToMMs(Trk.X2 - Board.XOrigin);
-    y2 := CoordToMMs(Trk.Y2 - Board.YOrigin);
-    wd := CoordToMMs(Trk.Width);
+    // Layer 1 (Top) und letztes Layer (Bottom) auslassen - die grossen.
+    // Weitere Layer hier ergaenzen, z.B.  or (Trk.Layer = eMidLayer1)
+    if (Trk.Layer = eTopLayer) or (Trk.Layer = eBottomLayer) then
+    begin
+      skipped := skipped + 1;
+    end
+    else
+    begin
+      if Trk.Net <> nil then netName := Trk.Net.Name else netName := '';
+      layName := Board.LayerName(Trk.Layer);
 
-    line := '    {"id": ' + IntToStr(id) +
-            ', "layer": "' + JsonEscape(layName) + '"' +
-            ', "net": "' + JsonEscape(netName) + '"' +
-            ', "x1": ' + DotFloat(x1) +
-            ', "y1": ' + DotFloat(y1) +
-            ', "x2": ' + DotFloat(x2) +
-            ', "y2": ' + DotFloat(y2) +
-            ', "width": ' + DotFloat(wd) + '}';
-    if not first then
-      sl[sl.Count - 1] := sl[sl.Count - 1] + ',';
-    sl.Add(line);
-    first := False;
+      x1 := CoordToMMs(Trk.X1 - ox);
+      y1 := CoordToMMs(Trk.Y1 - oy);
+      x2 := CoordToMMs(Trk.X2 - ox);
+      y2 := CoordToMMs(Trk.Y2 - oy);
+      wd := CoordToMMs(Trk.Width);
 
-    id := id + 1;
+      line := '    {"id": ' + IntToStr(id) +
+              ', "layer": "' + JsonEscape(layName) + '"' +
+              ', "net": "' + JsonEscape(netName) + '"' +
+              ', "x1": ' + DotFloatS(x1, sep) +
+              ', "y1": ' + DotFloatS(y1, sep) +
+              ', "x2": ' + DotFloatS(x2, sep) +
+              ', "y2": ' + DotFloatS(y2, sep) +
+              ', "width": ' + DotFloatS(wd, sep) + '}';
+      if not first then
+        sl[sl.Count - 1] := sl[sl.Count - 1] + ',';
+      sl.Add(line);
+      first := False;
+
+      id := id + 1;
+    end;
+
     Trk := Iter.NextPCBObject;
   end;
   Board.BoardIterator_Destroy(Iter);
 
+  if runaway then
+  begin
+    sl.Free;
+    ShowMessage('Abgebrochen: mehr als ' + IntToStr(MAX_ITER) + ' Objekte ' +
+      'durchlaufen, ohne ein Ende zu erreichen.' + #13#10#13#10 +
+      'Entweder ist das Board extrem gross oder der Iterator terminiert nicht. ' +
+      'Bitte melden - dann schliessen wir weitere Layer aus bzw. wechseln die ' +
+      'Iterationsmethode.');
+    Exit;
+  end;
+
   sl.Add('  ]');
   sl.Add('}');
 
-  cnt := id;
   // atomar schreiben: erst .tmp, dann umbenennen
   sl.SaveToFile(JsonPath + '.tmp');
   sl.Free;
   if FileExists(JsonPath) then DeleteFile(JsonPath);
   RenameFile(JsonPath + '.tmp', JsonPath);
 
-  if cnt <= 0 then
+  if id <= 0 then
   begin
-    ShowMessage('Keine Tracks gefunden. Ist das richtige PcbDoc aktiv?');
+    ShowMessage('Keine Tracks exportiert (ohne Top/Bottom).' + #13#10 +
+      'Liegen alle Bahnen auf Top/Bottom? Dann in RunVerbindungsCheck die ' +
+      'Layer-Bedingung anpassen.');
     Exit;
   end;
 
-  ShowMessage('tracks.json geschrieben (' + IntToStr(cnt) + ' Tracks).' +
+  ShowMessage('tracks.json geschrieben: ' + IntToStr(id) + ' Tracks ' +
+    '(Top/Bottom uebersprungen: ' + IntToStr(skipped) + ').' +
     #13#10#13#10 +
     'Laeuft der Hintergrund-Watcher (start_watcher.bat, am besten im ' +
     'Windows-Autostart), oeffnet sich der Browser-Report jetzt von selbst.' +
@@ -266,11 +325,11 @@ var
   Trk     : IPCB_Track;
   TrackList : TInterfaceList;
   cmd, parts, results : TStringList;
-  i, tid, endNo, applied : Integer;
+  i, tid, endNo, applied, maxTid, iterated : Integer;
   fid : String;
   xmm, ymm : Double;
   cx, cy : TCoord;
-  okMove : Boolean;
+  okMove, runaway : Boolean;
 begin
   Board := GetBoard;
   if Board = nil then Exit;
@@ -307,22 +366,48 @@ begin
     Exit;
   end;
 
-  // id -> IPCB_Track rekonstruieren: Board in DERSELBEN Reihenfolge iterieren
-  // wie beim Export (id = Iterationsindex).
+  // id -> IPCB_Track rekonstruieren. WICHTIG: exakt wie beim Export iterieren
+  // und Top/Bottom ueberspringen, damit die IDs uebereinstimmen.
+  parts := TStringList.Create;
+
+  // hoechste benoetigte Track-ID ermitteln -> nur bis dahin iterieren.
+  maxTid := -1;
+  for i := 0 to cmd.Count - 1 do
+  begin
+    if Trim(cmd[i]) = '' then Continue;
+    SplitSemi(cmd[i], parts);
+    if parts.Count < 5 then Continue;
+    tid := StrToIntDef(parts[1], -1);
+    if tid > maxTid then maxTid := tid;
+  end;
+
   TrackList := TInterfaceList.Create;
   Iter := Board.BoardIterator_Create;
   Iter.AddFilter_ObjectSet(MkSet(eTrackObject));
   Iter.AddFilter_LayerSet(AllLayers);
   Iter.AddFilter_Method(eProcessAll);
+  iterated := 0;
+  runaway  := False;
   Trk := Iter.FirstPCBObject;
   while Trk <> nil do
   begin
-    TrackList.Add(Trk);
+    iterated := iterated + 1;
+    if iterated > MAX_ITER then begin runaway := True; Break; end;
+    if not ((Trk.Layer = eTopLayer) or (Trk.Layer = eBottomLayer)) then
+      TrackList.Add(Trk);
+    if TrackList.Count > maxTid then Break;   // genug gesammelt
     Trk := Iter.NextPCBObject;
   end;
   Board.BoardIterator_Destroy(Iter);
 
-  parts   := TStringList.Create;
+  if runaway then
+  begin
+    parts.Free; cmd.Free; TrackList.Free;
+    ShowMessage('Abgebrochen: Board zu gross beim Aufbau der ID-Zuordnung ' +
+      '(ueber ' + IntToStr(MAX_ITER) + ' Objekte). Bitte melden.');
+    Exit;
+  end;
+
   results := TStringList.Create;   // Values[fid] = '1' (ok) / '0' (Fehler)
   applied := 0;
 

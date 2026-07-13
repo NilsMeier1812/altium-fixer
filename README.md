@@ -19,10 +19,26 @@ Der Fehlerbericht schlägt pro Fehler automatisch einen Fix vor:
 Der Zielpunkt ist in der Zoom-Grafik **grün markiert** (mit Pfeilen von den
 alten Punkten), bevor man klickt.
 
-**Layer wählen:** Es werden immer alle Layer exportiert und geprüft. Im Report
-gibt es oben eine **Layer-Filterleiste** (Checkbox je Layer mit Fehleranzahl,
-plus „alle"/„keine") – damit blendet man Layer live ein/aus, ohne neu zu
-exportieren. Der „offen"-Zähler zählt nur die eingeblendeten Layer.
+**Layer wählen:** Der **Top- und der Bottom-Layer werden beim Export
+übersprungen** (sie tragen bei großen Boards mit Abstand die meisten Bahnen und
+sind hier meist nicht gewollt). Das steht in `altium/VerbindungsCheck.pas` in
+`RunVerbindungsCheck` an der Zeile
+
+```
+if (Trk.Layer = eTopLayer) or (Trk.Layer = eBottomLayer) then
+```
+
+– dort lassen sich weitere Layer ergänzen (`or (Trk.Layer = eMidLayer1)` …) oder
+die Bedingung entfernen, um doch alles zu exportieren. Alle **exportierten**
+Layer lassen sich im Report zusätzlich über die **Layer-Filterleiste** live
+ein-/ausblenden (Checkbox je Layer mit Fehleranzahl, plus „alle"/„keine"); der
+„offen"-Zähler zählt nur die eingeblendeten Layer.
+
+> **Große Boards:** Altium-Skripte iterieren einzeln über jedes Objekt – das ist
+> langsam. Während `RunVerbindungsCheck` läuft, ist Altium **einige Sekunden bis
+> ~1–2 Minuten nicht bedienbar** (ein Hinweis-Dialog kündigt das an). Das ist
+> normal, bitte **nicht abbrechen**. Eine Not-Bremse (`MAX_ITER`) verhindert ein
+> Endlos-Hängen.
 
 ---
 
