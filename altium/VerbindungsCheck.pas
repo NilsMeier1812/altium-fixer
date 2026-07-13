@@ -361,6 +361,20 @@ end;
 
 
 {------------------------------------------------------------------------------}
+{ Einen Fix beim Server bestaetigen. Top-Level-Prozedur (DelphiScript erlaubt  }
+{ keinen Zugriff auf aeussere lokale Variablen aus verschachtelten Prozeduren).}
+{------------------------------------------------------------------------------}
+procedure SendAck(const fid : String; ok : Boolean);
+begin
+  if fid = '' then Exit;
+  if ok then
+    HttpGet(BaseUrl + '/ack?fix_id=' + fid + '&ok=1')
+  else
+    HttpGet(BaseUrl + '/ack?fix_id=' + fid + '&ok=0');
+end;
+
+
+{------------------------------------------------------------------------------}
 { Timer: /pending abfragen, Fixes anwenden, /ack senden                        }
 {------------------------------------------------------------------------------}
 procedure OnPoll(Sender : TObject);
@@ -375,18 +389,6 @@ var
   curFid : String;
   curOk  : Boolean;
   anyApplied : Boolean;
-
-  procedure FlushAck;
-  begin
-    if curFid <> '' then
-    begin
-      if curOk then
-        HttpGet(BaseUrl + '/ack?fix_id=' + curFid + '&ok=1')
-      else
-        HttpGet(BaseUrl + '/ack?fix_id=' + curFid + '&ok=0');
-    end;
-  end;
-
 begin
   if not Polling then Exit;
   if BaseUrl = '' then Exit;
@@ -425,7 +427,7 @@ begin
     // Fix-Wechsel -> vorherigen bestaetigen
     if (curFid <> '') and (fid <> curFid) then
     begin
-      FlushAck;
+      SendAck(curFid, curOk);
       curOk := True;
     end;
     curFid := fid;
@@ -435,7 +437,7 @@ begin
     else
       anyApplied := True;
   end;
-  FlushAck;
+  SendAck(curFid, curOk);
 
   parts.Free;
   lines.Free;
