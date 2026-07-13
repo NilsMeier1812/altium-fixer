@@ -38,6 +38,7 @@ tracks.json-Format:
 import os
 import sys
 import json
+import time
 import argparse
 import threading
 import webbrowser
@@ -89,6 +90,23 @@ class FixRegistry:
                     for (tid, end, tx, ty) in self.moves[fid]:
                         out.append(f"{fid};{tid};{end};{tx:.6f};{ty:.6f}")
                     self.state[fid] = "pending"
+        return "\n".join(out)
+
+    def bridge_lines(self):
+        """
+        Textzeilen fuer alle noch offenen Fixes (Datei-Bridge zu Altium).
+        Format je Endpunkt: fix_id;track_id;end;x_mm;y_mm
+        'queued' wird dabei auf 'sent' gesetzt (im Browser: 'wartet auf Altium').
+        """
+        out = []
+        with self.lock:
+            for fid, st in list(self.state.items()):
+                if st in ("done", "failed"):
+                    continue
+                if st == "queued":
+                    self.state[fid] = "sent"
+                for (tid, end, tx, ty) in self.moves[fid]:
+                    out.append(f"{fid};{tid};{end};{tx:.6f};{ty:.6f}")
         return "\n".join(out)
 
     def ack(self, fid, ok):
@@ -199,6 +217,47 @@ def start_server(port, handler_cls, max_tries=25):
     raise RuntimeError(f"Kein freier Port ab {port} gefunden.")
 
 
+def bridge_loop(registry, cmd_path, ack_path, stop_event):
+    """
+    Datei-Bridge zu Altium (weil Altium-DelphiScript hier kein OLE/HTTP kann):
+      - schreibt offene Fixes nach bridge_cmd.txt  (Server -> Altium)
+      - liest Bestaetigungen aus bridge_ack.txt     (Altium -> Server)
+    Beides tolerant und idempotent; laeuft in einem Daemon-Thread.
+    """
+    processed = set()
+    while not stop_event.is_set():
+        # 1) offene Fixes rausschreiben (atomar via temp + replace)
+        try:
+            body = registry.bridge_lines()
+            tmp = cmd_path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                f.write(body)
+            os.replace(tmp, cmd_path)
+        except OSError:
+            pass
+
+        # 2) Bestaetigungen einlesen (Zeilen "fix_id;ok")
+        try:
+            if os.path.exists(ack_path):
+                with open(ack_path, "r", encoding="utf-8") as f:
+                    lines = f.read().splitlines()
+                for ln in lines:
+                    ln = ln.strip()
+                    if not ln or ";" not in ln:
+                        continue
+                    fid, ok = ln.split(";", 1)
+                    fid = fid.strip()
+                    if fid in processed:
+                        continue
+                    processed.add(fid)
+                    good = ok.strip() in ("1", "ok", "OK", "true", "True")
+                    registry.ack(fid, good)
+        except OSError:
+            pass
+
+        time.sleep(0.3)
+
+
 def main():
     ap = argparse.ArgumentParser(description="Verbindungs-Check Altium-Live-Server")
     ap.add_argument("tracks", help="Pfad zur tracks.json")
@@ -224,16 +283,27 @@ def main():
     srv, port = start_server(args.port, handler)
     url = f"http://127.0.0.1:{port}/"
 
-    # Tatsaechlichen Port neben die tracks.json schreiben, damit das
-    # Altium-Skript ihn findet (falls der Wunsch-Port belegt war).
-    try:
-        with open(args.tracks + ".port", "w", encoding="utf-8") as pf:
-            pf.write(str(port))
-    except OSError:
-        pass
+    # Datei-Bridge zu Altium: liegen im selben Ordner wie die tracks.json.
+    workdir = os.path.dirname(os.path.abspath(args.tracks))
+    cmd_path = os.path.join(workdir, "bridge_cmd.txt")
+    ack_path = os.path.join(workdir, "bridge_ack.txt")
+    # alte Bridge-Dateien einer frueheren Sitzung entfernen
+    for p in (cmd_path, ack_path):
+        try:
+            if os.path.exists(p):
+                os.remove(p)
+        except OSError:
+            pass
+
+    stop_event = threading.Event()
+    bthread = threading.Thread(
+        target=bridge_loop, args=(registry, cmd_path, ack_path, stop_event),
+        daemon=True)
+    bthread.start()
 
     print(f"Server laeuft auf {url}")
-    print("Altium-Skript pollt /pending  |  Beenden mit Strg+C")
+    print(f"Datei-Bridge: {cmd_path}")
+    print("Im Browser fixen -> Altium uebernimmt live.  Beenden mit Strg+C.")
 
     if not args.no_open:
         try:
@@ -245,6 +315,7 @@ def main():
         srv.serve_forever()
     except KeyboardInterrupt:
         print("\nBeendet.")
+        stop_event.set()
         srv.shutdown()
 
 

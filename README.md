@@ -52,6 +52,7 @@ dass diese Struktur zusammenbleibt:
 altium-fixer\
   check_server.py
   check_excel.py
+  start_server.bat          <- startet den Server (Doppelklick)
   verbindungs_check\        <- Analyse-Kern (nicht umbenennen)
   altium\VerbindungsCheck.pas   <- Skript-Code
   altium\VerbindungsCheck.dfm   <- Formular (gehört zwingend dazu!)
@@ -62,6 +63,13 @@ altium-fixer\
 > gleich heißen. Das Formular (mit Timer) ist der Grund, warum die Live-
 > Übernahme läuft, ohne Altium einzufrieren.
 
+**Warum eine `.bat` und eine Datei-Bridge?** Das Altium-DelphiScript in dieser
+Installation kennt kein `CreateOleObject` – also **kein HTTP und kein Prozess-
+Start** aus Altium heraus. Deshalb: Der Server wird per `start_server.bat`
+gestartet, und Altium ↔ Python reden über zwei Dateien im Ordner
+(`bridge_cmd.txt` / `bridge_ack.txt`). Der Browser redet ganz normal per HTTP
+mit Python. Für dich ändert das nur einen Handgriff (den `.bat`-Doppelklick).
+
 ### 3. Altium-Skript einbinden
 1. In Altium: **File → Open** → `altium\VerbindungsCheck.PrjScr` (das Skript-
    projekt öffnen – so werden `.pas` und `.dfm` als Paar geladen).
@@ -69,37 +77,42 @@ altium-fixer\
    (die `.dfm` daneben wird automatisch mitgeladen).
 3. Die Prozedur **`RunVerbindungsCheck`** wählen → **OK**.
 
-Beim Start fragt das Skript in drei kleinen Dialogen ab:
-- **Python-Programm:** `python` (oder der volle Pfad zur `python.exe`).
-- **Skript-Ordner:** der Ordner mit `check_server.py`, z. B. `C:\Tools\altium-fixer`
-  (dort wird auch `tracks.json` abgelegt).
-- **Port:** `8765` (Standard reicht; wird bei Belegung automatisch hochgezählt).
+Das Skript fragt beim Start nur **einen** Wert ab:
+- **Arbeitsordner:** der Ordner mit `check_server.py` + `start_server.bat`,
+  z. B. `C:\Tools\altium-fixer` (dort landen auch `tracks.json` und die
+  Bridge-Dateien).
+
+> Python-Pfad/Port stehen in `start_server.bat`. Falls `python` nicht im PATH
+> ist, dort oben `set PY=C:\Pfad\zu\python.exe` eintragen.
 
 ---
 
 ## Benutzung (Altium-Live)
 
 1. Das gewünschte **`.PcbDoc` öffnen und aktiv** haben.
-2. Skript starten (`RunVerbindungsCheck`) und die drei Dialoge bestätigen.
-   - Das Skript liest alle Tracks, schreibt `tracks.json`, startet Python.
-   - Ein **schwarzes Konsolenfenster** (Python) geht auf, der **Browser** öffnet
-     den Report, und in Altium erscheint ein **kleines Status-Fenster** („läuft").
-3. Im Report jeden Fehler prüfen. Passt der grün markierte Zielpunkt, auf
+2. Skript starten (`RunVerbindungsCheck`) und den Arbeitsordner bestätigen.
+   - Das Skript liest alle Tracks, schreibt `tracks.json` und öffnet ein
+     **kleines Status-Fenster** in Altium.
+3. Im Arbeitsordner **`start_server.bat` doppelklicken** (falls der Server noch
+   nicht läuft). Ein Konsolenfenster geht auf und der **Browser** öffnet den
+   Report.
+4. Im Report jeden Fehler prüfen. Passt der grün markierte Zielpunkt, auf
    **„In Altium fixen"** klicken.
-   - Der Endpunkt wandert **sofort** im Board an die richtige Stelle.
+   - Der Endpunkt wandert **innerhalb ~1 Sekunde** im Board an die richtige Stelle
+     (der Altium-Timer holt den Fix aus der Bridge-Datei).
    - Der Block wechselt auf **„Behoben in Altium"**.
    - Jeder Fix ist ein eigener **Undo-Schritt** in Altium (`Strg+Z`).
-4. Betrifft ein späterer Fix einen schon geänderten Track, wird der Block als
+5. Betrifft ein späterer Fix einen schon geänderten Track, wird der Block als
    **veraltet** markiert – dann einfach den Check neu starten für den
    aktuellen Stand.
-5. **Zum Beenden:** im Altium-Status-Fenster **„Stoppen/Schließen"** klicken,
-   oder das schwarze **Python-Fenster schließen** (das Status-Fenster merkt das
-   und meldet „beendet"). Danach das Python-Fenster schließen.
+6. **Zum Beenden:** im Altium-Status-Fenster **„Stoppen/Schließen"** klicken und
+   das schwarze **Python-Fenster schließen**.
 
 Während des Live-Fixens ist das kleine Status-Fenster in Altium offen; ein Timer
-darin holt die Klicks ab und aktualisiert das Board bei jedem Fix. Altium bleibt
-dabei bedienbar (der Timer blockiert nicht). Es läuft alles lokal (`127.0.0.1`),
-keine Firewall-Freigabe nötig.
+darin liest die Bridge-Datei und aktualisiert das Board bei jedem Fix. Altium
+bleibt dabei bedienbar (der Timer blockiert nicht). Browser ↔ Python läuft lokal
+über HTTP (`127.0.0.1`), Altium ↔ Python über Dateien – keine Firewall-Freigabe
+nötig.
 
 ---
 
@@ -150,20 +163,26 @@ Partner-Logik ab.
 
 ```
 verbindungs_check/core.py   Analyse, Fix-Berechnung (compute_fix), HTML/SVG
-check_server.py             Altium-Live-Server (stdlib): HTTP + Fix-Queue
+check_server.py             Server (stdlib): HTTP für Browser + Datei-Bridge zu Altium
 check_excel.py              Excel-Fallback (pandas/openpyxl + tkinter)
-altium/VerbindungsCheck.pas DelphiScript: Export, Server-Start, Live-Fix-Polling
+start_server.bat            startet den Server (Altium kann das nicht selbst)
+altium/VerbindungsCheck.pas DelphiScript: Export + Live-Fix über Datei-Bridge
+altium/VerbindungsCheck.dfm Formular (Status + Stopp-Button + Timer)
 tests/test_fixes.py         Geometrie- und Analyse-Tests
 ```
 
-### Protokoll (HTML ↔ Server ↔ Altium)
+### Protokoll
 
 ```
-Browser  --POST /fix {fix_id}-->  Server (legt Fix in Queue)
-Altium   --GET  /pending------->  Server (liefert "fix_id;track_id;end;x;y")
-Altium   --GET  /ack?fix_id&ok->  Server (markiert erledigt)
-Browser  --GET  /status-------->  Server (Anzeige: gesendet/behoben/veraltet)
+Browser  --POST /fix {fix_id}-->  Server            (HTTP, legt Fix in Queue)
+Browser  --GET  /status-------->  Server            (HTTP, Anzeige: wartet/behoben/veraltet)
+
+Server   --schreibt---> bridge_cmd.txt  --liest-->  Altium   (offene Fixes)
+Altium   --schreibt---> bridge_ack.txt  --liest-->  Server   (erledigt: fix_id;1)
 ```
+
+Grund für die Datei-Bridge: Das Altium-DelphiScript kennt hier kein
+`CreateOleObject` (kein HTTP/OLE aus Altium). Datei-I/O geht dagegen zuverlässig.
 
 Das Altium-Skript identifiziert Tracks **nicht** über Koordinaten, sondern hält
 die Track-Referenzen im Speicher (Index = exportierte ID). Fixes werden nur

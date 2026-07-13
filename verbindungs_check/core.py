@@ -945,7 +945,7 @@ def _script(server_mode):
             stel.className = 'fixstate failed';
             stel.textContent = 'Altium-Fehler';
             if (btn) btn.disabled = false;
-          } else if (s === 'pending' || s === 'queued'){
+          } else if (s === 'pending' || s === 'queued' || s === 'sent'){
             stel.className = 'fixstate sending';
             stel.textContent = 'wartet auf Altium ...';
           }

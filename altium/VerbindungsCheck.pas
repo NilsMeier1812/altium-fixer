@@ -1,28 +1,27 @@
 {..............................................................................}
-{  Verbindungs-Check - Altium-Integration (DelphiScript, Formular + Timer)     }
+{  Verbindungs-Check - Altium-Integration (DelphiScript, Datei-Bridge)         }
 {                                                                              }
-{  Exportiert alle Tracks des aktiven PCB-Dokuments, startet den Python-       }
-{  Server (check_server.py) und wendet die im HTML angeklickten Fixes LIVE     }
-{  auf das Board an.                                                           }
+{  Exportiert alle Tracks des aktiven PCB-Dokuments und wendet die im HTML     }
+{  angeklickten Fixes LIVE auf das Board an - ueber DATEIEN, nicht ueber HTTP. }
 {                                                                              }
-{  WICHTIG: Dieses Skript besteht aus ZWEI Dateien, die zusammengehoeren:      }
-{     VerbindungsCheck.pas   (dieser Code)                                     }
-{     VerbindungsCheck.dfm   (das Formular)                                    }
-{  Am besten das Projekt VerbindungsCheck.PrjScr oeffnen und daraus starten.   }
+{  Warum Datei-Bridge: Dieses Altium-DelphiScript kennt KEIN CreateOleObject   }
+{  (kein MSXML/HTTP, kein WScript.Shell). Also kommuniziert Altium mit dem      }
+{  Python-Server ueber zwei Textdateien im Arbeitsordner:                      }
+{     bridge_cmd.txt   Server -> Altium  (offene Fixes: fix_id;track;end;x;y)   }
+{     bridge_ack.txt   Altium -> Server  (erledigt:     fix_id;1)               }
 {                                                                              }
-{  Bedienung in Altium:                                                        }
-{    Skript ausfuehren -> Prozedur "RunVerbindungsCheck"                       }
-{    1. Drei kurze Eingaben (Python, Skript-Ordner, Port).                     }
-{    2. Board wird exportiert, Python-Server startet, Browser oeffnet Report.  }
-{    3. Ein kleines Fenster zeigt "laeuft". Im Browser "In Altium fixen"       }
-{       klicken -> Endpunkt wandert sofort (jeder Fix = eigener Undo-Schritt). }
-{    4. Fertig? -> Button "Stoppen/Schliessen" ODER Python-Fenster schliessen. }
+{  Der Python-Server wird NICHT aus Altium gestartet (kein Prozess-Start ohne   }
+{  OLE). Stattdessen doppelklickt man start_server.bat im Arbeitsordner.        }
 {                                                                              }
-{  Warum ein Formular mit Timer statt einer Schleife: Eine Endlosschleife auf  }
-{  Altiums Haupt-Thread friert Altium ein. Der Timer im (modalen) Formular     }
-{  wird ueber die Nachrichtenschleife bedient und blockiert nicht.             }
+{  Ablauf:                                                                      }
+{    1. PcbDoc aktiv, Skript -> RunVerbindungsCheck, Arbeitsordner bestaetigen. }
+{    2. tracks.json wird geschrieben. Ein kleines Fenster geht auf.             }
+{    3. start_server.bat doppelklicken -> Browser oeffnet den Report.           }
+{    4. Im Browser "In Altium fixen" -> der Timer uebernimmt es live.           }
+{    5. Beenden: "Stoppen/Schliessen" + Python-Fenster schliessen.             }
 {                                                                              }
-{  Zahlen: locale-unabhaengig, Ausgabe mit Punkt, Lesen akzeptiert Punkt+Komma.}
+{  Der Timer laeuft im modalen Formular (Nachrichtenschleife) und friert       }
+{  Altium NICHT ein. Zahlen locale-unabhaengig (Punkt raus, Punkt+Komma rein). }
 {..............................................................................}
 
 interface
@@ -42,17 +41,16 @@ var
 
 implementation
 
-{$R *.dfm}
-
 var
   Board      : IPCB_Board;
   TrackList  : TInterfaceList;   // Items[id] = IPCB_Track
   TrackCount : Integer;
-  BaseUrl    : String;
-  RepoDir    : String;           // Ordner mit check_server.py (+ tracks.json)
+  WorkDir    : String;           // Ordner mit check_server.py + Bridge-Dateien
   JsonPath   : String;
-  PortPath   : String;
-  ServerMiss : Integer;          // wie oft /ping in Folge fehlschlug
+  CmdPath    : String;           // bridge_cmd.txt  (Server -> Altium)
+  AckPath    : String;           // bridge_ack.txt  (Altium -> Server)
+  AppliedFids : TStringList;     // schon angewendete fix_ids (Dedupe)
+  AckLines    : TStringList;     // kumulativ "fix_id;1" fuer bridge_ack.txt
 
 
 {------------------------------------------------------------------------------}
@@ -65,8 +63,7 @@ begin
   Result := Copy(probe, 2, 1);
 end;
 
-// Double -> String, IMMER mit Punkt.
-function DotFloat(x : Double) : String;
+function DotFloat(x : Double) : String;   // Double -> String, IMMER mit Punkt
 var s, sep, c, r : String; i : Integer;
 begin
   s := FloatToStr(x);
@@ -80,8 +77,7 @@ begin
   Result := r;
 end;
 
-// String -> Double, akzeptiert Punkt UND Komma als Dezimaltrenner.
-function DotStrToFloat(const s : String) : Double;
+function DotStrToFloat(const s : String) : Double;  // akzeptiert Punkt UND Komma
 var sep, c, t : String; i : Integer;
 begin
   sep := DecSep;
@@ -98,7 +94,6 @@ end;
 {------------------------------------------------------------------------------}
 { Kleine Helfer                                                                }
 {------------------------------------------------------------------------------}
-// JSON-String escapen (manuell, ohne Set-Syntax).
 function JsonEscape(const s : String) : String;
 var i : Integer; c, r : String;
 begin
@@ -113,7 +108,7 @@ begin
   Result := r;
 end;
 
-// Zeile an ';' in eine Liste zerlegen (ohne StrictDelimiter/DelimitedText).
+// Zeile an ';' in eine Liste zerlegen.
 procedure SplitSemi(const s : String; list : TStringList);
 var i : Integer; cur, c : String;
 begin
@@ -131,32 +126,6 @@ begin
       cur := cur + c;
   end;
   list.Add(cur);
-end;
-
-// HTTP GET ueber MSXML. Liefert responseText, oder '' bei Fehler.
-function HttpGet(const url : String) : String;
-var http : Variant;
-begin
-  Result := '';
-  try
-    http := CreateOleObject('MSXML2.XMLHTTP.6.0');
-    http.open('GET', url, False);
-    http.send;
-    if http.status = 200 then
-      Result := http.responseText;
-  except
-    Result := '';
-  end;
-end;
-
-// Einen Fix beim Server bestaetigen.
-procedure SendAck(const fid : String; ok : Boolean);
-begin
-  if fid = '' then Exit;
-  if ok then
-    HttpGet(BaseUrl + '/ack?fix_id=' + fid + '&ok=1')
-  else
-    HttpGet(BaseUrl + '/ack?fix_id=' + fid + '&ok=0');
 end;
 
 
@@ -232,74 +201,12 @@ begin
   sl.Add('}');
 
   TrackCount := TrackList.Count;
-  JsonPath := RepoDir + '\tracks.json';
-  PortPath := JsonPath + '.port';
-  if FileExists(PortPath) then
-    DeleteFile(PortPath);
   sl.SaveToFile(JsonPath);
   sl.Free;
 
   Result := TrackCount > 0;
   if not Result then
     ShowMessage('Keine Tracks gefunden. Ist das richtige PcbDoc aktiv?');
-end;
-
-
-{------------------------------------------------------------------------------}
-{ Python-Server starten und auf Port-File warten                               }
-{------------------------------------------------------------------------------}
-function StartServer(py, wishPort : String) : Boolean;
-var
-  Wsh   : Variant;
-  cmd   : String;
-  srv   : String;
-  sl    : TStringList;
-  tries : Integer;
-begin
-  Result := False;
-  py := Trim(py);
-  wishPort := Trim(wishPort);
-  if py = '' then py := 'python';
-  if wishPort = '' then wishPort := '8765';
-  srv := RepoDir + '\check_server.py';
-
-  // Fenster sichtbar (1) -> Python-Ausgabe/Fehler bleiben sichtbar.
-  cmd := 'cmd /k ""' + py + '" "' + srv + '" "' + JsonPath +
-         '" --port ' + wishPort + '"';
-  try
-    Wsh := CreateOleObject('WScript.Shell');
-    Wsh.Run(cmd, 1, False);
-  except
-    ShowMessage('Konnte Python nicht starten. Pfad pruefen.');
-    Exit;
-  end;
-
-  // Auf das Port-File warten (Server schreibt den echten Port hinein).
-  tries := 0;
-  while (not FileExists(PortPath)) and (tries < 40) do
-  begin
-    Sleep(250);
-    Inc(tries);
-  end;
-  if not FileExists(PortPath) then
-  begin
-    ShowMessage('Server-Port nicht gefunden. Laeuft Python? Ordner/Python pruefen.');
-    Exit;
-  end;
-
-  sl := TStringList.Create;
-  sl.LoadFromFile(PortPath);
-  BaseUrl := 'http://127.0.0.1:' + Trim(sl.Text);
-  sl.Free;
-
-  tries := 0;
-  while (HttpGet(BaseUrl + '/ping') <> 'pong') and (tries < 20) do
-  begin
-    Sleep(200);
-    Inc(tries);
-  end;
-
-  Result := True;
 end;
 
 
@@ -343,35 +250,48 @@ end;
 
 
 {------------------------------------------------------------------------------}
-{ Eine Runde: /pending abfragen, Fixes anwenden, /ack senden                   }
+{ Eine Runde: bridge_cmd.txt lesen, Fixes anwenden, bridge_ack.txt schreiben   }
 {------------------------------------------------------------------------------}
 procedure PollOnce;
 var
-  resp   : String;
+  cmd    : TStringList;
   lines  : TStringList;
   parts  : TStringList;
   i      : Integer;
-  fid    : String;
-  tid, endNo : Integer;
-  xmm, ymm   : Double;
-  curFid : String;
-  curOk  : Boolean;
-  anyApplied : Boolean;
+  fid, curFid : String;
+  tid, endNo  : Integer;
+  xmm, ymm    : Double;
+  curOk       : Boolean;
+  changed     : Boolean;
+  anyApplied  : Boolean;
 begin
-  if BaseUrl = '' then Exit;
-  // Nur anwenden, wenn das urspruengliche Board aktiv ist. Sonst gar nicht erst
-  // /pending holen (sonst blieben Fixes serverseitig als "pending" haengen).
-  if PCBServer.GetCurrentPCBBoard <> Board then Exit;
+  if not FileExists(CmdPath) then
+  begin
+    LabelStatus.Caption :=
+      'Warte auf Server ... bitte start_server.bat im Ordner starten.';
+    Exit;
+  end;
+  // Nur anwenden, wenn das urspruengliche Board aktiv ist.
+  if PCBServer.GetCurrentPCBBoard <> Board then
+  begin
+    LabelStatus.Caption := 'Anderes Dokument aktiv - urspruengliches PcbDoc waehlen.';
+    Exit;
+  end;
 
-  resp := HttpGet(BaseUrl + '/pending');
-  if resp = '' then Exit;
+  cmd := TStringList.Create;
+  try
+    cmd.LoadFromFile(CmdPath);
+  except
+    cmd.Free;
+    Exit;   // Datei gerade im Schreibvorgang -> naechste Runde
+  end;
 
-  lines := TStringList.Create;
-  lines.Text := resp;
+  lines := cmd;   // Alias
   parts := TStringList.Create;
 
-  curFid := '';
-  curOk  := True;
+  curFid  := '';
+  curOk   := True;
+  changed := False;
   anyApplied := False;
 
   for i := 0 to lines.Count - 1 do
@@ -380,58 +300,76 @@ begin
     SplitSemi(lines[i], parts);
     if parts.Count < 5 then Continue;
 
-    fid   := parts[0];
+    fid := parts[0];
+
+    // Fix-Wechsel -> vorherigen abschliessen (Ack schreiben, wenn neu)
+    if (curFid <> '') and (fid <> curFid) then
+    begin
+      if AppliedFids.IndexOf(curFid) < 0 then
+      begin
+        AppliedFids.Add(curFid);
+        if curOk then AckLines.Add(curFid + ';1')
+        else          AckLines.Add(curFid + ';0');
+        changed := True;
+      end;
+      curOk := True;
+    end;
+    curFid := fid;
+
+    // schon angewendet? dann ueberspringen
+    if AppliedFids.IndexOf(fid) >= 0 then
+    begin
+      curFid := fid;
+      Continue;
+    end;
+
     tid   := StrToIntDef(parts[1], -1);
     endNo := StrToIntDef(parts[2], 0);
     xmm   := DotStrToFloat(parts[3]);
     ymm   := DotStrToFloat(parts[4]);
-
-    if (curFid <> '') and (fid <> curFid) then
-    begin
-      SendAck(curFid, curOk);
-      curOk := True;
-    end;
-    curFid := fid;
 
     if not ApplyMove(tid, endNo, xmm, ymm) then
       curOk := False
     else
       anyApplied := True;
   end;
-  SendAck(curFid, curOk);
+
+  // letzten Fix abschliessen
+  if (curFid <> '') and (AppliedFids.IndexOf(curFid) < 0) then
+  begin
+    AppliedFids.Add(curFid);
+    if curOk then AckLines.Add(curFid + ';1')
+    else          AckLines.Add(curFid + ';0');
+    changed := True;
+  end;
 
   parts.Free;
-  lines.Free;
+  cmd.Free;
 
   if anyApplied then
     Board.ViewManager_FullUpdate;
+
+  if changed then
+  begin
+    try
+      AckLines.SaveToFile(AckPath);
+    except
+      // Server liest gerade -> naechste Runde erneut versuchen
+    end;
+  end;
+
+  LabelStatus.Caption :=
+    'Aktiv. Angewendete Fixes: ' + IntToStr(AppliedFids.Count) + '.' + #13#10 +
+    'Im Browser weiter fixen. Beenden: unten stoppen + Python-Fenster zu.';
 end;
 
 
 {------------------------------------------------------------------------------}
 { Formular-Ereignisse                                                          }
 {------------------------------------------------------------------------------}
-// Timer: laeuft nur, solange das (modale) Fenster offen ist -> blockiert nicht.
 procedure TVCForm.TimerPollTimer(Sender : TObject);
 begin
-  if HttpGet(BaseUrl + '/ping') = 'pong' then
-  begin
-    ServerMiss := 0;
-    PollOnce;
-    LabelStatus.Caption :=
-      'Laeuft. Im Browser "In Altium fixen" klicken - Endpunkte wandern sofort.' +
-      #13#10 + 'Beenden: unten stoppen oder das Python-Fenster schliessen.';
-  end
-  else
-  begin
-    Inc(ServerMiss);
-    if ServerMiss >= 6 then      // ~3 s ohne Server
-    begin
-      TimerPoll.Enabled := False;
-      LabelStatus.Caption :=
-        'Server beendet (Python-Fenster geschlossen). Dieses Fenster kann zu.';
-    end;
-  end;
+  PollOnce;
 end;
 
 procedure TVCForm.ButtonStopClick(Sender : TObject);
@@ -446,45 +384,53 @@ end;
 {------------------------------------------------------------------------------}
 procedure RunVerbindungsCheck;
 var
-  py, repo, wishPort : String;
+  repo : String;
 begin
-  BaseUrl := '';
-  ServerMiss := 0;
-  TrackList := TInterfaceList.Create;
+  TrackList   := TInterfaceList.Create;
+  AppliedFids := TStringList.Create;
+  AckLines    := TStringList.Create;
   try
-    py := InputBox('Verbindungs-Check',
-                   'Python-Programm (Exe oder "python"):', 'python');
     repo := InputBox('Verbindungs-Check',
-                     'Skript-Ordner (enthaelt check_server.py):',
+                     'Arbeitsordner (enthaelt check_server.py + start_server.bat):',
                      'C:\Pfad\zu\altium-fixer');
-    wishPort := InputBox('Verbindungs-Check',
-                         'Port (wird bei Belegung hochgezaehlt):', '8765');
-
-    // Skript-Ordner pruefen (dort landet auch tracks.json).
     repo := Trim(repo);
     if repo = '' then
     begin
-      ShowMessage('Kein Skript-Ordner angegeben. Abbruch.');
+      ShowMessage('Kein Ordner angegeben. Abbruch.');
       Exit;
     end;
     if Copy(repo, Length(repo), 1) = '\' then
       repo := Copy(repo, 1, Length(repo) - 1);
-    RepoDir := repo;
-    if not FileExists(RepoDir + '\check_server.py') then
+    WorkDir := repo;
+    if not FileExists(WorkDir + '\check_server.py') then
     begin
       ShowMessage('check_server.py nicht gefunden unter:'#13#10 +
-                  RepoDir + '\check_server.py');
+                  WorkDir + '\check_server.py');
       Exit;
     end;
 
+    JsonPath := WorkDir + '\tracks.json';
+    CmdPath  := WorkDir + '\bridge_cmd.txt';
+    AckPath  := WorkDir + '\bridge_ack.txt';
+
+    // eigene Ausgabedatei einer frueheren Sitzung entfernen
+    if FileExists(AckPath) then DeleteFile(AckPath);
+
     if not ExportBoard then Exit;
-    if not StartServer(py, wishPort) then Exit;
+
+    ShowMessage('tracks.json wurde geschrieben.' + #13#10#13#10 +
+                'Jetzt "start_server.bat" im Ordner doppelklicken (falls noch ' +
+                'nicht offen). Der Browser oeffnet den Report.' + #13#10#13#10 +
+                'Dann im Browser "In Altium fixen" klicken - dieses Fenster ' +
+                'uebernimmt die Fixe live ins Board.');
 
     // Modales Fenster mit Timer -> Live-Uebernahme ohne Altium einzufrieren.
     VCForm := TVCForm.Create(nil);
     VCForm.ShowModal;
     VCForm.Free;
   finally
+    AckLines.Free;
+    AppliedFids.Free;
     TrackList.Free;
   end;
 end;
