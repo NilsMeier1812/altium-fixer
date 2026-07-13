@@ -201,8 +201,12 @@ begin
   sl.Add('}');
 
   TrackCount := TrackList.Count;
-  sl.SaveToFile(JsonPath);
+  // Atomar schreiben: erst .tmp, dann umbenennen. So sieht der Watcher nie
+  // eine halb geschriebene Datei.
+  sl.SaveToFile(JsonPath + '.tmp');
   sl.Free;
+  if FileExists(JsonPath) then DeleteFile(JsonPath);
+  RenameFile(JsonPath + '.tmp', JsonPath);
 
   Result := TrackCount > 0;
   if not Result then
@@ -419,8 +423,11 @@ begin
     if not ExportBoard then Exit;
 
     ShowMessage('tracks.json wurde geschrieben.' + #13#10#13#10 +
-                'Jetzt "start_server.bat" im Ordner doppelklicken (falls noch ' +
-                'nicht offen). Der Browser oeffnet den Report.' + #13#10#13#10 +
+                'Laeuft der Hintergrund-Watcher (start_watcher.bat, am besten im ' +
+                'Windows-Autostart), oeffnet sich der Browser jetzt von selbst.' +
+                #13#10#13#10 +
+                'Falls nicht: einmalig "start_watcher.bat" im Ordner ' +
+                'doppelklicken.' + #13#10#13#10 +
                 'Dann im Browser "In Altium fixen" klicken - dieses Fenster ' +
                 'uebernimmt die Fixe live ins Board.');
 

@@ -926,8 +926,14 @@ def _script(server_mode):
         if (err && !err.classList.contains('fixed')) err.classList.add('stale');
       });
     }
+    var pageGen = null;
     function pollStatus(){
       fetch('/status').then(function(r){ return r.json(); }).then(function(j){
+        // Watch-Modus: hat der Server einen neuen Report geladen -> Seite neu laden.
+        if (typeof j.gen !== 'undefined'){
+          if (pageGen === null) pageGen = j.gen;
+          else if (j.gen !== pageGen){ location.reload(); return; }
+        }
         var states = j.states || {};
         var affectedTracks = {};
         Object.keys(states).forEach(function(fid){

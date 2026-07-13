@@ -52,7 +52,8 @@ dass diese Struktur zusammenbleibt:
 altium-fixer\
   check_server.py
   check_excel.py
-  start_server.bat          <- startet den Server (Doppelklick)
+  start_watcher.bat         <- Hintergrund-Watcher (empfohlen, in den Autostart)
+  start_server.bat          <- Einmal-Server (Alternative, pro Durchlauf 1 Klick)
   verbindungs_check\        <- Analyse-Kern (nicht umbenennen)
   altium\VerbindungsCheck.pas   <- Skript-Code
   altium\VerbindungsCheck.dfm   <- Formular (gehört zwingend dazu!)
@@ -65,10 +66,26 @@ altium-fixer\
 
 **Warum eine `.bat` und eine Datei-Bridge?** Das Altium-DelphiScript in dieser
 Installation kennt kein `CreateOleObject` – also **kein HTTP und kein Prozess-
-Start** aus Altium heraus. Deshalb: Der Server wird per `start_server.bat`
-gestartet, und Altium ↔ Python reden über zwei Dateien im Ordner
-(`bridge_cmd.txt` / `bridge_ack.txt`). Der Browser redet ganz normal per HTTP
-mit Python. Für dich ändert das nur einen Handgriff (den `.bat`-Doppelklick).
+Start** aus Altium heraus. Altium kann den Server folglich **nicht selbst
+starten**. Deshalb läuft der Server als Python-Prozess außerhalb, und Altium ↔
+Python reden über zwei Dateien im Ordner (`bridge_cmd.txt` / `bridge_ack.txt`).
+Der Browser redet ganz normal per HTTP mit Python.
+
+### 2a. Watcher in den Autostart legen (einmalig – danach nur noch Altium)
+
+Damit du im Alltag **ausschließlich in Altium klicken** musst, startet der
+Server **einmal beim Windows-Login** und läuft dann im Hintergrund. Er wartet
+auf `tracks.json` und öffnet den Report **von selbst**, sobald Altium sie
+schreibt.
+
+1. **Win+R** → `shell:startup` → Enter (öffnet den Autostart-Ordner).
+2. Rechtsklick → **Neu → Verknüpfung** → als Ziel `start_watcher.bat` wählen.
+3. Fertig. Ab dem nächsten Login läuft der Watcher automatisch (ein kleines
+   Konsolenfenster; kann minimiert bleiben).
+
+> Sofort testen ohne Neustart: `start_watcher.bat` einmal doppelklicken.
+> Ohne Autostart bleibt die Alternative `start_server.bat` (einmal pro
+> Durchlauf doppelklicken) – siehe unten.
 
 ### 3. Altium-Skript einbinden
 1. In Altium: **File → Open** → `altium\VerbindungsCheck.PrjScr` (das Skript-
@@ -89,24 +106,33 @@ Das Skript fragt beim Start nur **einen** Wert ab:
 
 ## Benutzung (Altium-Live)
 
+**Mit Watcher im Autostart (empfohlen) – nur noch Altium-Klicks:**
+
 1. Das gewünschte **`.PcbDoc` öffnen und aktiv** haben.
 2. Skript starten (`RunVerbindungsCheck`) und den Arbeitsordner bestätigen.
    - Das Skript liest alle Tracks, schreibt `tracks.json` und öffnet ein
      **kleines Status-Fenster** in Altium.
-3. Im Arbeitsordner **`start_server.bat` doppelklicken** (falls der Server noch
-   nicht läuft). Ein Konsolenfenster geht auf und der **Browser** öffnet den
-   Report.
-4. Im Report jeden Fehler prüfen. Passt der grün markierte Zielpunkt, auf
+   - Der Hintergrund-Watcher merkt das in ~1 s und **öffnet den Browser
+     automatisch** mit dem Report. (Kein `.bat`-Klick nötig.)
+
+**Ohne Watcher (Alternative mit `start_server.bat`):** Statt auf den Watcher zu
+warten, nach `RunVerbindungsCheck` einmal `start_server.bat` im Ordner
+doppelklicken – der Browser öffnet dann den Report. Danach identisch weiter.
+
+Weiter (beide Varianten):
+
+3. Im Report jeden Fehler prüfen. Passt der grün markierte Zielpunkt, auf
    **„In Altium fixen"** klicken.
    - Der Endpunkt wandert **innerhalb ~1 Sekunde** im Board an die richtige Stelle
      (der Altium-Timer holt den Fix aus der Bridge-Datei).
    - Der Block wechselt auf **„Behoben in Altium"**.
    - Jeder Fix ist ein eigener **Undo-Schritt** in Altium (`Strg+Z`).
-5. Betrifft ein späterer Fix einen schon geänderten Track, wird der Block als
+4. Betrifft ein späterer Fix einen schon geänderten Track, wird der Block als
    **veraltet** markiert – dann einfach den Check neu starten für den
    aktuellen Stand.
-6. **Zum Beenden:** im Altium-Status-Fenster **„Stoppen/Schließen"** klicken und
-   das schwarze **Python-Fenster schließen**.
+5. **Zum Beenden:** im Altium-Status-Fenster **„Stoppen/Schließen"** klicken.
+   Den Watcher (bzw. das Python-Fenster) kannst du laufen lassen – beim nächsten
+   `RunVerbindungsCheck` ist er sofort wieder bereit.
 
 Während des Live-Fixens ist das kleine Status-Fenster in Altium offen; ein Timer
 darin liest die Bridge-Datei und aktualisiert das Board bei jedem Fix. Altium
@@ -164,8 +190,10 @@ Partner-Logik ab.
 ```
 verbindungs_check/core.py   Analyse, Fix-Berechnung (compute_fix), HTML/SVG
 check_server.py             Server (stdlib): HTTP für Browser + Datei-Bridge zu Altium
+                            (--watch = dauerhaft, öffnet Report automatisch)
 check_excel.py              Excel-Fallback (pandas/openpyxl + tkinter)
-start_server.bat            startet den Server (Altium kann das nicht selbst)
+start_watcher.bat           Hintergrund-Watcher (in den Autostart) – Server läuft dauerhaft
+start_server.bat            Einmal-Server (Alternative; Altium kann keinen Prozess starten)
 altium/VerbindungsCheck.pas DelphiScript: Export + Live-Fix über Datei-Bridge
 altium/VerbindungsCheck.dfm Formular (Status + Stopp-Button + Timer)
 tests/test_fixes.py         Geometrie- und Analyse-Tests
