@@ -71,15 +71,17 @@ C:\altium-track-fixer\
   start_watcher.bat         <- Hintergrund-Watcher (empfohlen, in den Autostart)
   start_server.bat          <- Einmal-Server (Alternative, pro Durchlauf 1 Klick)
   verbindungs_check\        <- Analyse-Kern (nicht umbenennen)
-  altium\VerbindungsCheck.pas   <- Skript-Code (zwei Prozeduren)
+  altium\VerbindungsCheck.pas   <- Skript-Code (Export + Holen-Fenster)
+  altium\VerbindungsCheck.dfm   <- Formular (gehört zwingend dazu, gleicher Name!)
   altium\VerbindungsCheck.PrjScr
 ```
 
-> **Formlos, mit Absicht.** Das Altium-Skript hat **kein** Formular, keinen
-> Timer und keine `.dfm` – genau diese Konstrukte haben Altium in dieser
-> Installation beim Laden eingefroren. Stattdessen gibt es zwei einfache
-> Prozeduren: `RunVerbindungsCheck` (Export) und `ApplyFixes` (Fixes
-> anwenden). Beide kehren sofort zu Altium zurück, nichts läuft dauerhaft.
+> **`.pas` und `.dfm` gehören zusammen.** Sie müssen im selben Ordner liegen und
+> gleich heißen. Das Formular liefert das Fenster mit dem Button „Änderungen aus
+> dem Browser holen". Ein **Timer** ist bewusst **nicht** drin (der brauchte es
+> nicht): ein Klick holt genau einmal. Wichtig: Formulare in Altium werden aus
+> der `.dfm` **automatisch** erzeugt – im Code **kein** `TVCForm.Create`, nur
+> `VCForm.ShowModal`.
 
 **Warum eine `.bat` und eine Datei-Bridge?** Das Altium-DelphiScript in dieser
 Installation kennt kein `CreateOleObject` – also **kein HTTP und kein Prozess-
@@ -107,13 +109,11 @@ schreibt.
 ### 3. Altium-Skript einbinden
 1. In Altium: **File → Open** → `altium\VerbindungsCheck.PrjScr` (Skriptprojekt).
 2. Alternativ **DXP → Run Script… → Browse** → `altium\VerbindungsCheck.pas`.
-3. Zum Prüfen die Prozedur **`RunVerbindungsCheck`** wählen → **OK**.
+3. Die Prozedur **`RunVerbindungsCheck`** wählen → **OK**.
 
-> **Tipp – `ApplyFixes` auf einen Shortcut legen.** Das Anwenden der Fixes
-> ist die zweite Prozedur `ApplyFixes`. Am bequemsten weist du ihr eine
-> Tastenkombination zu (**DXP → Customize** bzw. Rechtsklick auf die Toolbar
-> → *Customize* → Kategorie *Scripts*), dann genügt nach dem Klicken im
-> Browser ein Tastendruck.
+> `RunVerbindungsCheck` exportiert **und** öffnet danach das Fenster mit dem
+> Button „Änderungen aus dem Browser holen". `ApplyFixes` ist nur der Fallback,
+> falls das Fenster schon geschlossen ist.
 
 Der Arbeitsordner ist **fest auf `C:\altium-track-fixer`** verdrahtet (Funktion
 `VCWorkDir` oben in `VerbindungsCheck.pas`) – das Skript fragt nichts mehr ab.
@@ -127,36 +127,36 @@ Liegt das Repo woanders, den Pfad in `VCWorkDir` anpassen. Dorthin schreibt das 
 
 ## Benutzung (Altium)
 
-Zwei Prozeduren, klar getrennt: **exportieren** (`RunVerbindungsCheck`) und
-**anwenden** (`ApplyFixes`).
-
 1. Das gewünschte **`.PcbDoc` öffnen** und das **PCB-Fenster in den Vordergrund**
    holen (aktives Dokument – sonst ist der PCB-Server nicht bereit).
-2. **`RunVerbindungsCheck`** ausführen (kein Ordner-Dialog mehr – Pfad ist fest).
-   - Liest die Tracks (**ohne Top/Bottom, nur mit Net**) und schreibt
-     `tracks.json`. Ein Hinweis-Dialog kündigt die Wartezeit an.
+2. **`RunVerbindungsCheck`** ausführen (kein Ordner-Dialog – Pfad ist fest).
+   - Liest die Tracks (**alle Layer, nur mit Net**) und schreibt `tracks.json`.
+     Ein Hinweis-Dialog kündigt die Wartezeit an; bei großen Boards dauert der
+     Export einige Minuten (Altium ist solange blockiert – normal).
    - Der Hintergrund-Watcher merkt das in ~1 s und **öffnet den Browser
-     automatisch** mit dem Report. (Ohne Watcher: einmal `start_server.bat`
-     doppelklicken.)
+     automatisch**. (Ohne Watcher: einmal `start_server.bat` doppelklicken.)
+   - Danach geht in Altium ein **Fenster** auf. Altium ist ab jetzt blockiert –
+     das macht nichts, du arbeitest jetzt im Browser.
 3. Im Report jeden Fehler prüfen. Passt der grün markierte Zielpunkt, auf
    **„In Altium fixen"** klicken – beliebig viele. Die Blöcke zeigen
-   **„wartet – in Altium ApplyFixes ausführen"**.
-4. In Altium **`ApplyFixes`** ausführen (am besten per Shortcut, siehe Setup).
+   **„wartet – in Altium 'Änderungen holen' klicken"**.
+4. Zurück in Altium: im Fenster auf **„Änderungen aus dem Browser holen"**.
    - Alle angeklickten Fixes werden **in einem Rutsch** ins Board übernommen,
-     die Ansicht aktualisiert sich.
-   - Im Browser wechseln die erledigten Blöcke auf **„Behoben in Altium"**.
-   - **`Strg+Z`** macht die ganze Runde rückgängig.
-5. Weitere Fehler anklicken → wieder `ApplyFixes`. Für einen frischen Stand
-   (nach vielen Änderungen) einfach `RunVerbindungsCheck` erneut ausführen.
+     die Ansicht aktualisiert sich. Im Browser wechseln sie auf
+     **„Behoben in Altium"**. **`Strg+Z`** macht die Runde rückgängig.
+   - **Das Fenster bleibt offen:** im Browser weitere Fehler anklicken und
+     erneut „holen" – **ohne** erneuten (langen) Export.
+5. **„Schließen"** beendet. Für weitere Fixes danach: `ApplyFixes` (baut die
+   Zuordnung neu auf – dauert wieder etwas) oder `RunVerbindungsCheck` neu.
 
 Browser ↔ Python läuft lokal über HTTP (`127.0.0.1`), Altium ↔ Python über
 Dateien im Arbeitsordner (`bridge_cmd.txt` / `bridge_ack.txt`) – keine
 Firewall-Freigabe nötig.
 
-> **Warum nicht vollautomatisch?** Ein „ein Klick im Browser → sofort live"
-> bräuchte in Altium eine dauerlaufende Form mit Timer. Genau das fror diese
-> Installation ein. Der `ApplyFixes`-Tastendruck ist der robuste Ersatz:
-> ein Handgriff pro Fix-Runde, dafür stürzt nichts ab.
+> **Warum kein Timer / kein Auto-Poll?** Braucht es nicht. Ein Klick auf
+> „holen" zieht genau einmal alle offenen Fixes. Die Track-Liste liegt aus dem
+> Export im Speicher, daher ist das Holen sofort da – ohne erneute Iteration
+> über das große Board.
 
 ---
 
@@ -212,7 +212,8 @@ check_server.py             Server (stdlib): HTTP für Browser + Datei-Bridge zu
 check_excel.py              Excel-Fallback (pandas/openpyxl + tkinter)
 start_watcher.bat           Hintergrund-Watcher (in den Autostart) – Server läuft dauerhaft
 start_server.bat            Einmal-Server (Alternative; Altium kann keinen Prozess starten)
-altium/VerbindungsCheck.pas DelphiScript (formlos): RunVerbindungsCheck (Export) + ApplyFixes
+altium/VerbindungsCheck.pas DelphiScript: RunVerbindungsCheck (Export + Holen-Fenster) + ApplyFixes
+altium/VerbindungsCheck.dfm Formular (Status + "holen"-Button + "schliessen")
 tests/test_fixes.py         Geometrie- und Analyse-Tests
 ```
 
@@ -222,29 +223,30 @@ tests/test_fixes.py         Geometrie- und Analyse-Tests
 Browser  --POST /fix {fix_id}-->  Server            (HTTP, legt Fix in Queue)
 Browser  --GET  /status-------->  Server            (HTTP, Anzeige: wartet/behoben/veraltet)
 
-Server   --schreibt---> bridge_cmd.txt  --liest-->  Altium   (offene Fixes, bei ApplyFixes)
+Server   --schreibt---> bridge_cmd.txt  --liest-->  Altium   (offene Fixes, beim "holen")
 Altium   --schreibt---> bridge_ack.txt  --liest-->  Server   (erledigt: fix_id;1)
 ```
 
 Grund für die Datei-Bridge: Das Altium-DelphiScript kennt hier kein
 `CreateOleObject` (kein HTTP/OLE aus Altium). Datei-I/O geht dagegen zuverlässig.
 
-Track-Identität ohne persistente Referenzen: `RunVerbindungsCheck` vergibt die
-ID als **Iterations-Index** über alle Tracks. `ApplyFixes` iteriert das Board in
-**derselben Reihenfolge** erneut und rekonstruiert daraus die Zuordnung
-ID → Track – deshalb braucht es keine im Speicher gehaltene Form. Wichtig: das
-**gleiche PcbDoc** muss aktiv sein und sollte zwischen Export und Anwenden nicht
-strukturell verändert werden (Tracks hinzufügen/löschen verschiebt die IDs).
+Track-Identität: `RunVerbindungsCheck` vergibt die ID als **Iterations-Index**
+über die Tracks mit Net und hält die Referenzen im Fenster **im Speicher** –
+das „Holen" nutzt sie direkt (keine erneute Iteration). Der Fallback `ApplyFixes`
+(nach dem Schließen) iteriert das Board in **derselben Reihenfolge** erneut und
+rekonstruiert die Zuordnung. Wichtig: das **gleiche PcbDoc** muss aktiv sein und
+sollte zwischen Export und Anwenden nicht strukturell verändert werden (Tracks
+hinzufügen/löschen verschiebt die IDs).
 
 ---
 
 ## Hinweis zum Altium-Skript
 
 `VerbindungsCheck.pas` kann außerhalb von Altium nicht getestet werden. Es ist
-defensiv geschrieben (Fehlerdialoge, `PCBServer`-Prüfung, Board-Prüfung) und
-**formlos** – ohne Formular/Timer/`.dfm`, weil genau diese Konstrukte Altium in
-dieser Installation beim Laden eingefroren haben. Beim ersten Einsatz empfiehlt
-sich ein **kleines Test-Board**: `RunVerbindungsCheck`, im Browser einen Fehler
-anklicken, `ApplyFixes`, im Board kontrollieren, `Strg+Z` testen. Je nach
-Altium-Version kann eine API-Kleinigkeit abweichen – dann bitte die genaue
-Fehlermeldung notieren.
+defensiv geschrieben (Fehlerdialoge, `PCBServer`-Prüfung, Board-Prüfung). Das
+Formular hat **keinen Timer** (ein Klick auf „holen" reicht), und die Form wird
+aus der `.dfm` **automatisch** erzeugt (im Code kein `TVCForm.Create`). Beim
+ersten Einsatz empfiehlt sich ein **kleines Test-Board**: `RunVerbindungsCheck`,
+im Browser einen Fehler anklicken, „Änderungen aus dem Browser holen", im Board
+kontrollieren, `Strg+Z` testen. Je nach Altium-Version kann eine API-Kleinigkeit
+abweichen – dann bitte die genaue Fehlermeldung notieren.

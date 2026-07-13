@@ -953,7 +953,7 @@ def _script(server_mode):
             if (btn) btn.disabled = false;
           } else if (s === 'pending' || s === 'queued' || s === 'sent'){
             stel.className = 'fixstate sending';
-            stel.textContent = 'wartet – in Altium "ApplyFixes" ausfuehren';
+            stel.textContent = 'wartet – in Altium "Aenderungen holen" klicken';
           }
         });
         // veraltete Bloecke markieren (Tracks, die schon gefixt wurden)
