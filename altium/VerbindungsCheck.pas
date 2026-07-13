@@ -1,56 +1,29 @@
 {..............................................................................}
-{  Verbindungs-Check - Altium-Integration (DelphiScript, Datei-Bridge)         }
+{  Verbindungs-Check - Altium-Integration (DelphiScript, FORMLOS)              }
 {                                                                              }
-{  Exportiert alle Tracks des aktiven PCB-Dokuments und wendet die im HTML     }
-{  angeklickten Fixes LIVE auf das Board an - ueber DATEIEN, nicht ueber HTTP. }
+{  Bewusst OHNE Formular, ohne TTimer, ohne .dfm, ohne OLE - das sind genau    }
+{  die Dinge, die in dieser Altium-Installation Freezes/Fehler ausgeloest      }
+{  haben. Statt einer dauerlaufenden Form gibt es zwei einfache Prozeduren:    }
 {                                                                              }
-{  Warum Datei-Bridge: Dieses Altium-DelphiScript kennt KEIN CreateOleObject   }
-{  (kein MSXML/HTTP, kein WScript.Shell). Also kommuniziert Altium mit dem      }
-{  Python-Server ueber zwei Textdateien im Arbeitsordner:                      }
-{     bridge_cmd.txt   Server -> Altium  (offene Fixes: fix_id;track;end;x;y)   }
-{     bridge_ack.txt   Altium -> Server  (erledigt:     fix_id;1)               }
-{                                                                              }
-{  Der Python-Server wird NICHT aus Altium gestartet (kein Prozess-Start ohne   }
-{  OLE). Stattdessen doppelklickt man start_server.bat im Arbeitsordner.        }
+{    RunVerbindungsCheck  -> exportiert alle Tracks nach tracks.json.          }
+{                            Der Python-Watcher oeffnet daraufhin den Report.  }
+{    ApplyFixes           -> liest die im Browser angeklickten Fixes aus       }
+{                            bridge_cmd.txt und wendet sie aufs Board an.      }
 {                                                                              }
 {  Ablauf:                                                                      }
-{    1. PcbDoc aktiv, Skript -> RunVerbindungsCheck, Arbeitsordner bestaetigen. }
-{    2. tracks.json wird geschrieben. Ein kleines Fenster geht auf.             }
-{    3. start_server.bat doppelklicken -> Browser oeffnet den Report.           }
-{    4. Im Browser "In Altium fixen" -> der Timer uebernimmt es live.           }
-{    5. Beenden: "Stoppen/Schliessen" + Python-Fenster schliessen.             }
+{    1. PcbDoc oeffnen und AKTIV in den Vordergrund holen.                      }
+{    2. Skript -> RunVerbindungsCheck, Arbeitsordner bestaetigen.              }
+{       -> tracks.json wird geschrieben, der Browser-Report geht auf.          }
+{    3. Im Browser Fehler mit "In Altium fixen" anklicken (beliebig viele).    }
+{    4. In Altium ApplyFixes ausfuehren (am besten auf einen Shortcut legen).  }
+{       -> alle offenen Fixes werden angewendet, das Board aktualisiert sich.  }
+{    5. Bei Bedarf 2-4 wiederholen (RunVerbindungsCheck fuer aktuellen Stand). }
 {                                                                              }
-{  Der Timer laeuft im modalen Formular (Nachrichtenschleife) und friert       }
-{  Altium NICHT ein. Zahlen locale-unabhaengig (Punkt raus, Punkt+Komma rein). }
+{  Zahlen locale-unabhaengig (Punkt raus beim Schreiben, Punkt+Komma rein).    }
 {..............................................................................}
 
-interface
-
-type
-  TVCForm = class(TForm)
-    LabelStatus : TLabel;
-    ButtonStop  : TButton;
-    TimerPoll   : TTimer;
-    procedure ButtonStopClick(Sender : TObject);
-    procedure TimerPollTimer(Sender : TObject);
-  end;
-
 var
-  VCForm : TVCForm;
-
-
-implementation
-
-var
-  Board      : IPCB_Board;
-  TrackList  : TInterfaceList;   // Items[id] = IPCB_Track
-  TrackCount : Integer;
-  WorkDir    : String;           // Ordner mit check_server.py + Bridge-Dateien
-  JsonPath   : String;
-  CmdPath    : String;           // bridge_cmd.txt  (Server -> Altium)
-  AckPath    : String;           // bridge_ack.txt  (Altium -> Server)
-  AppliedFids : TStringList;     // schon angewendete fix_ids (Dedupe)
-  AckLines    : TStringList;     // kumulativ "fix_id;1" fuer bridge_ack.txt
+  LastWorkDir : String;   // gemerkter Ordner (Vorbelegung fuer die naechste Abfrage)
 
 
 {------------------------------------------------------------------------------}
@@ -130,53 +103,87 @@ end;
 
 
 {------------------------------------------------------------------------------}
-{ Board -> tracks.json                                                         }
+{ Board defensiv holen (PCBServer koennte nil sein -> sonst Access Violation)   }
 {------------------------------------------------------------------------------}
-function ExportBoard : Boolean;
-var
-  Iter    : IPCB_BoardIterator;
-  Trk     : IPCB_Track;
-  sl      : TStringList;
-  netName : String;
-  layName : String;
-  x1, y1, x2, y2, wd : Double;
-  first   : Boolean;
-  line    : String;
-  id      : Integer;
+function GetBoard : IPCB_Board;
 begin
-  Result := False;
-
-  // 1) PCB-API-Server selbst pruefen. Ist er nil, wuerde der Aufruf von
-  //    GetCurrentPCBBoard sonst eine Access Violation werfen (nicht nil
-  //    zurueckgeben). Passiert, wenn kein PCB-Editor/-Dokument aktiv ist.
+  Result := nil;
   if PCBServer = nil then
   begin
     ShowMessage('PCB-Server ist nicht verfuegbar.' + #13#10#13#10 +
-      'Bitte ein .PcbDoc oeffnen und dieses PCB-Fenster in den Vordergrund ' +
-      'holen (aktives Dokument), dann das Skript erneut starten.');
+      'Bitte ein .PcbDoc oeffnen und das PCB-Fenster in den Vordergrund holen ' +
+      '(aktives Dokument), dann das Skript erneut starten.');
     Exit;
   end;
-
-  // 2) Aktuelles Board holen - defensiv, damit ein Fehler eine klare Meldung
-  //    gibt statt eines rohen Absturzes.
-  Board := nil;
   try
-    Board := PCBServer.GetCurrentPCBBoard;
+    Result := PCBServer.GetCurrentPCBBoard;
   except
-    ShowMessage('Konnte das aktuelle PCB-Board nicht lesen.' + #13#10#13#10 +
-      'Ist ein .PcbDoc geoeffnet UND als aktives Fenster im Vordergrund? ' +
-      'Bitte das PCB-Dokument anklicken und das Skript erneut starten.');
-    Exit;
+    Result := nil;
   end;
+  if Result = nil then
+    ShowMessage('Kein PCB-Dokument aktiv.' + #13#10#13#10 +
+      'Bitte ein .PcbDoc oeffnen und das PCB-Fenster in den Vordergrund holen.');
+end;
 
-  if Board = nil then
+
+{------------------------------------------------------------------------------}
+{ Arbeitsordner abfragen (mit Vorbelegung aus dem letzten Lauf)                 }
+{------------------------------------------------------------------------------}
+function AskWorkDir : String;
+var repo, dflt : String;
+begin
+  Result := '';
+  if LastWorkDir <> '' then dflt := LastWorkDir
+  else                      dflt := 'C:\Pfad\zu\altium-fixer';
+
+  repo := InputBox('Verbindungs-Check',
+                   'Arbeitsordner (enthaelt check_server.py):', dflt);
+  repo := Trim(repo);
+  if repo = '' then Exit;
+  if Copy(repo, Length(repo), 1) = '\' then
+    repo := Copy(repo, 1, Length(repo) - 1);
+
+  if not FileExists(repo + '\check_server.py') then
   begin
-    ShowMessage('Kein PCB-Dokument aktiv. Bitte ein .PcbDoc oeffnen und das ' +
-      'PCB-Fenster in den Vordergrund holen.');
+    ShowMessage('check_server.py nicht gefunden unter:' + #13#10 +
+                repo + '\check_server.py');
     Exit;
   end;
 
-  TrackList.Clear;
+  LastWorkDir := repo;
+  Result := repo;
+end;
+
+
+{------------------------------------------------------------------------------}
+{ 1) Export: Board -> tracks.json                                              }
+{------------------------------------------------------------------------------}
+procedure RunVerbindungsCheck;
+var
+  Board   : IPCB_Board;
+  WorkDir : String;
+  JsonPath, CmdPath, AckPath : String;
+  Iter    : IPCB_BoardIterator;
+  Trk     : IPCB_Track;
+  sl      : TStringList;
+  netName, layName, line : String;
+  x1, y1, x2, y2, wd : Double;
+  first   : Boolean;
+  id, cnt : Integer;
+begin
+  Board := GetBoard;
+  if Board = nil then Exit;
+
+  WorkDir := AskWorkDir;
+  if WorkDir = '' then Exit;
+
+  JsonPath := WorkDir + '\tracks.json';
+  CmdPath  := WorkDir + '\bridge_cmd.txt';
+  AckPath  := WorkDir + '\bridge_ack.txt';
+
+  // frische Sitzung: alte Bridge-Dateien entfernen
+  if FileExists(CmdPath) then DeleteFile(CmdPath);
+  if FileExists(AckPath) then DeleteFile(AckPath);
 
   sl := TStringList.Create;
   sl.Add('{');
@@ -189,12 +196,10 @@ begin
   Iter.AddFilter_Method(eProcessAll);
 
   first := True;
+  id := 0;
   Trk := Iter.FirstPCBObject;
   while Trk <> nil do
   begin
-    id := TrackList.Count;      // ID = Index in der Liste
-    TrackList.Add(Trk);
-
     if Trk.Net <> nil then netName := Trk.Net.Name else netName := '';
     layName := Board.LayerName(Trk.Layer);
 
@@ -217,6 +222,7 @@ begin
     sl.Add(line);
     first := False;
 
+    id := id + 1;
     Trk := Iter.NextPCBObject;
   end;
   Board.BoardIterator_Destroy(Iter);
@@ -224,90 +230,62 @@ begin
   sl.Add('  ]');
   sl.Add('}');
 
-  TrackCount := TrackList.Count;
-  // Atomar schreiben: erst .tmp, dann umbenennen. So sieht der Watcher nie
-  // eine halb geschriebene Datei.
+  cnt := id;
+  // atomar schreiben: erst .tmp, dann umbenennen
   sl.SaveToFile(JsonPath + '.tmp');
   sl.Free;
   if FileExists(JsonPath) then DeleteFile(JsonPath);
   RenameFile(JsonPath + '.tmp', JsonPath);
 
-  Result := TrackCount > 0;
-  if not Result then
+  if cnt <= 0 then
+  begin
     ShowMessage('Keine Tracks gefunden. Ist das richtige PcbDoc aktiv?');
-end;
-
-
-{------------------------------------------------------------------------------}
-{ Einen Endpunkt eines Tracks verschieben                                      }
-{------------------------------------------------------------------------------}
-function ApplyMove(tid, endNo : Integer; xmm, ymm : Double) : Boolean;
-var
-  Trk : IPCB_Track;
-  cx, cy : TCoord;
-begin
-  Result := False;
-  if (tid < 0) or (tid >= TrackList.Count) then Exit;
-  Trk := TrackList.Items[tid];
-  if Trk = nil then Exit;
-
-  cx := Board.XOrigin + MMsToCoord(xmm);
-  cy := Board.YOrigin + MMsToCoord(ymm);
-
-  try
-    PCBServer.PreProcess;
-    Trk.BeginModify;
-    if endNo = 1 then
-    begin
-      Trk.X1 := cx;
-      Trk.Y1 := cy;
-    end
-    else
-    begin
-      Trk.X2 := cx;
-      Trk.Y2 := cy;
-    end;
-    Trk.EndModify;
-    Trk.GraphicallyInvalidate;
-    PCBServer.PostProcess;
-    Result := True;
-  except
-    Result := False;
+    Exit;
   end;
+
+  ShowMessage('tracks.json geschrieben (' + IntToStr(cnt) + ' Tracks).' +
+    #13#10#13#10 +
+    'Laeuft der Hintergrund-Watcher (start_watcher.bat, am besten im ' +
+    'Windows-Autostart), oeffnet sich der Browser-Report jetzt von selbst.' +
+    #13#10 + 'Falls nicht: einmalig start_watcher.bat im Ordner doppelklicken.' +
+    #13#10#13#10 +
+    'Danach im Browser die Fehler anklicken und in Altium "ApplyFixes" ' +
+    'ausfuehren, um sie ins Board zu uebernehmen.');
 end;
 
 
 {------------------------------------------------------------------------------}
-{ Eine Runde: bridge_cmd.txt lesen, Fixes anwenden, bridge_ack.txt schreiben   }
+{ 2) Apply: bridge_cmd.txt -> Fixes ins Board, bridge_ack.txt zurueck          }
 {------------------------------------------------------------------------------}
-procedure PollOnce;
+procedure ApplyFixes;
 var
-  cmd    : TStringList;
-  lines  : TStringList;
-  parts  : TStringList;
-  i      : Integer;
-  fid, curFid : String;
-  tid, endNo  : Integer;
-  xmm, ymm    : Double;
-  curOk       : Boolean;
-  changed     : Boolean;
-  anyApplied  : Boolean;
+  Board   : IPCB_Board;
+  WorkDir : String;
+  CmdPath, AckPath : String;
+  Iter    : IPCB_BoardIterator;
+  Trk     : IPCB_Track;
+  TrackList : TInterfaceList;
+  cmd, parts, results : TStringList;
+  i, tid, endNo, applied : Integer;
+  fid : String;
+  xmm, ymm : Double;
+  cx, cy : TCoord;
+  okMove : Boolean;
 begin
+  Board := GetBoard;
+  if Board = nil then Exit;
+
+  WorkDir := AskWorkDir;
+  if WorkDir = '' then Exit;
+
+  CmdPath := WorkDir + '\bridge_cmd.txt';
+  AckPath := WorkDir + '\bridge_ack.txt';
+
   if not FileExists(CmdPath) then
   begin
-    LabelStatus.Caption :=
-      'Warte auf Server ... bitte start_server.bat im Ordner starten.';
-    Exit;
-  end;
-  // Nur anwenden, wenn das urspruengliche Board aktiv ist.
-  if PCBServer = nil then
-  begin
-    LabelStatus.Caption := 'PCB-Server nicht verfuegbar - PCB-Fenster aktivieren.';
-    Exit;
-  end;
-  if PCBServer.GetCurrentPCBBoard <> Board then
-  begin
-    LabelStatus.Caption := 'Anderes Dokument aktiv - urspruengliches PcbDoc waehlen.';
+    ShowMessage('Keine offenen Fixes gefunden (bridge_cmd.txt fehlt).' +
+      #13#10#13#10 + 'Erst im Browser Fehler mit "In Altium fixen" anklicken, ' +
+      'dann ApplyFixes ausfuehren.');
     Exit;
   end;
 
@@ -316,159 +294,112 @@ begin
     cmd.LoadFromFile(CmdPath);
   except
     cmd.Free;
-    Exit;   // Datei gerade im Schreibvorgang -> naechste Runde
+    ShowMessage('bridge_cmd.txt konnte nicht gelesen werden. Kurz warten und ' +
+      'ApplyFixes erneut ausfuehren.');
+    Exit;
   end;
 
-  lines := cmd;   // Alias
-  parts := TStringList.Create;
-
-  curFid  := '';
-  curOk   := True;
-  changed := False;
-  anyApplied := False;
-
-  for i := 0 to lines.Count - 1 do
+  if Trim(cmd.Text) = '' then
   begin
-    if Trim(lines[i]) = '' then Continue;
-    SplitSemi(lines[i], parts);
-    if parts.Count < 5 then Continue;
+    cmd.Free;
+    ShowMessage('Keine offenen Fixes. Im Browser zuerst "In Altium fixen" ' +
+      'anklicken.');
+    Exit;
+  end;
 
-    fid := parts[0];
+  // id -> IPCB_Track rekonstruieren: Board in DERSELBEN Reihenfolge iterieren
+  // wie beim Export (id = Iterationsindex).
+  TrackList := TInterfaceList.Create;
+  Iter := Board.BoardIterator_Create;
+  Iter.AddFilter_ObjectSet(MkSet(eTrackObject));
+  Iter.AddFilter_LayerSet(AllLayers);
+  Iter.AddFilter_Method(eProcessAll);
+  Trk := Iter.FirstPCBObject;
+  while Trk <> nil do
+  begin
+    TrackList.Add(Trk);
+    Trk := Iter.NextPCBObject;
+  end;
+  Board.BoardIterator_Destroy(Iter);
 
-    // Fix-Wechsel -> vorherigen abschliessen (Ack schreiben, wenn neu)
-    if (curFid <> '') and (fid <> curFid) then
+  parts   := TStringList.Create;
+  results := TStringList.Create;   // Values[fid] = '1' (ok) / '0' (Fehler)
+  applied := 0;
+
+  PCBServer.PreProcess;
+  try
+    for i := 0 to cmd.Count - 1 do
     begin
-      if AppliedFids.IndexOf(curFid) < 0 then
+      if Trim(cmd[i]) = '' then Continue;
+      SplitSemi(cmd[i], parts);
+      if parts.Count < 5 then Continue;
+
+      fid   := parts[0];
+      tid   := StrToIntDef(parts[1], -1);
+      endNo := StrToIntDef(parts[2], 0);
+      xmm   := DotStrToFloat(parts[3]);
+      ymm   := DotStrToFloat(parts[4]);
+
+      okMove := False;
+      if (tid >= 0) and (tid < TrackList.Count) then
       begin
-        AppliedFids.Add(curFid);
-        if curOk then AckLines.Add(curFid + ';1')
-        else          AckLines.Add(curFid + ';0');
-        changed := True;
+        Trk := TrackList.Items[tid];
+        if Trk <> nil then
+        begin
+          cx := Board.XOrigin + MMsToCoord(xmm);
+          cy := Board.YOrigin + MMsToCoord(ymm);
+          try
+            Trk.BeginModify;
+            if endNo = 1 then
+            begin
+              Trk.X1 := cx;
+              Trk.Y1 := cy;
+            end
+            else
+            begin
+              Trk.X2 := cx;
+              Trk.Y2 := cy;
+            end;
+            Trk.EndModify;
+            Trk.GraphicallyInvalidate;
+            okMove := True;
+            applied := applied + 1;
+          except
+            okMove := False;
+          end;
+        end;
       end;
-      curOk := True;
+
+      // Ergebnis je fix_id festhalten (ein Fehler -> '0')
+      if okMove then
+      begin
+        if results.Values[fid] = '' then results.Values[fid] := '1';
+      end
+      else
+        results.Values[fid] := '0';
     end;
-    curFid := fid;
-
-    // schon angewendet? dann ueberspringen
-    if AppliedFids.IndexOf(fid) >= 0 then
-    begin
-      curFid := fid;
-      Continue;
-    end;
-
-    tid   := StrToIntDef(parts[1], -1);
-    endNo := StrToIntDef(parts[2], 0);
-    xmm   := DotStrToFloat(parts[3]);
-    ymm   := DotStrToFloat(parts[4]);
-
-    if not ApplyMove(tid, endNo, xmm, ymm) then
-      curOk := False
-    else
-      anyApplied := True;
+  finally
+    PCBServer.PostProcess;
   end;
 
-  // letzten Fix abschliessen
-  if (curFid <> '') and (AppliedFids.IndexOf(curFid) < 0) then
-  begin
-    AppliedFids.Add(curFid);
-    if curOk then AckLines.Add(curFid + ';1')
-    else          AckLines.Add(curFid + ';0');
-    changed := True;
+  Board.ViewManager_FullUpdate;
+
+  // Bestaetigungen schreiben: Zeilen "fix_id;1" bzw. "fix_id;0"
+  cmd.Clear;
+  for i := 0 to results.Count - 1 do
+    cmd.Add(results.Names[i] + ';' + results.ValueFromIndex[i]);
+  try
+    cmd.SaveToFile(AckPath);
+  except
+    // Server liest evtl. gerade -> egal, naechste Runde
   end;
 
   parts.Free;
+  results.Free;
   cmd.Free;
+  TrackList.Free;
 
-  if anyApplied then
-    Board.ViewManager_FullUpdate;
-
-  if changed then
-  begin
-    try
-      AckLines.SaveToFile(AckPath);
-    except
-      // Server liest gerade -> naechste Runde erneut versuchen
-    end;
-  end;
-
-  LabelStatus.Caption :=
-    'Aktiv. Angewendete Fixes: ' + IntToStr(AppliedFids.Count) + '.' + #13#10 +
-    'Im Browser weiter fixen. Beenden: unten stoppen + Python-Fenster zu.';
+  ShowMessage(IntToStr(applied) + ' Endpunkt(e) angepasst.' + #13#10#13#10 +
+    'Im Browser wechseln die erledigten Fehler auf "Behoben in Altium".' +
+    #13#10 + 'Rueckgaengig: ein Strg+Z macht die ganze Runde rueckgaengig.');
 end;
-
-
-{------------------------------------------------------------------------------}
-{ Formular-Ereignisse                                                          }
-{------------------------------------------------------------------------------}
-procedure TVCForm.TimerPollTimer(Sender : TObject);
-begin
-  PollOnce;
-end;
-
-procedure TVCForm.ButtonStopClick(Sender : TObject);
-begin
-  TimerPoll.Enabled := False;
-  Close;
-end;
-
-
-{------------------------------------------------------------------------------}
-{ Einstieg                                                                     }
-{------------------------------------------------------------------------------}
-procedure RunVerbindungsCheck;
-var
-  repo : String;
-begin
-  TrackList   := TInterfaceList.Create;
-  AppliedFids := TStringList.Create;
-  AckLines    := TStringList.Create;
-  try
-    repo := InputBox('Verbindungs-Check',
-                     'Arbeitsordner (enthaelt check_server.py + start_server.bat):',
-                     'C:\Pfad\zu\altium-fixer');
-    repo := Trim(repo);
-    if repo = '' then
-    begin
-      ShowMessage('Kein Ordner angegeben. Abbruch.');
-      Exit;
-    end;
-    if Copy(repo, Length(repo), 1) = '\' then
-      repo := Copy(repo, 1, Length(repo) - 1);
-    WorkDir := repo;
-    if not FileExists(WorkDir + '\check_server.py') then
-    begin
-      ShowMessage('check_server.py nicht gefunden unter:'#13#10 +
-                  WorkDir + '\check_server.py');
-      Exit;
-    end;
-
-    JsonPath := WorkDir + '\tracks.json';
-    CmdPath  := WorkDir + '\bridge_cmd.txt';
-    AckPath  := WorkDir + '\bridge_ack.txt';
-
-    // eigene Ausgabedatei einer frueheren Sitzung entfernen
-    if FileExists(AckPath) then DeleteFile(AckPath);
-
-    if not ExportBoard then Exit;
-
-    ShowMessage('tracks.json wurde geschrieben.' + #13#10#13#10 +
-                'Laeuft der Hintergrund-Watcher (start_watcher.bat, am besten im ' +
-                'Windows-Autostart), oeffnet sich der Browser jetzt von selbst.' +
-                #13#10#13#10 +
-                'Falls nicht: einmalig "start_watcher.bat" im Ordner ' +
-                'doppelklicken.' + #13#10#13#10 +
-                'Dann im Browser "In Altium fixen" klicken - dieses Fenster ' +
-                'uebernimmt die Fixe live ins Board.');
-
-    // Modales Fenster mit Timer -> Live-Uebernahme ohne Altium einzufrieren.
-    VCForm := TVCForm.Create(nil);
-    VCForm.ShowModal;
-    VCForm.Free;
-  finally
-    AckLines.Free;
-    AppliedFids.Free;
-    TrackList.Free;
-  end;
-end;
-
-end.
