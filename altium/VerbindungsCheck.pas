@@ -1,26 +1,48 @@
 {..............................................................................}
-{  Verbindungs-Check - Altium-Integration (DelphiScript)                       }
+{  Verbindungs-Check - Altium-Integration (DelphiScript, Formular + Timer)     }
 {                                                                              }
 {  Exportiert alle Tracks des aktiven PCB-Dokuments, startet den Python-       }
 {  Server (check_server.py) und wendet die im HTML angeklickten Fixes LIVE     }
 {  auf das Board an.                                                           }
 {                                                                              }
+{  WICHTIG: Dieses Skript besteht aus ZWEI Dateien, die zusammengehoeren:      }
+{     VerbindungsCheck.pas   (dieser Code)                                     }
+{     VerbindungsCheck.dfm   (das Formular)                                    }
+{  Am besten das Projekt VerbindungsCheck.PrjScr oeffnen und daraus starten.   }
+{                                                                              }
 {  Bedienung in Altium:                                                        }
-{    DXP -> Run Script ... -> dieses Skript -> Prozedur "RunVerbindungsCheck"  }
+{    Skript ausfuehren -> Prozedur "RunVerbindungsCheck"                       }
+{    1. Drei kurze Eingaben (Python, Skript-Ordner, Port).                     }
+{    2. Board wird exportiert, Python-Server startet, Browser oeffnet Report.  }
+{    3. Ein kleines Fenster zeigt "laeuft". Im Browser "In Altium fixen"       }
+{       klicken -> Endpunkt wandert sofort (jeder Fix = eigener Undo-Schritt). }
+{    4. Fertig? -> Button "Stoppen/Schliessen" ODER Python-Fenster schliessen. }
 {                                                                              }
-{  Ablauf:                                                                     }
-{   1. Drei kurze Eingaben (Python, Skript-Ordner, Port).                      }
-{   2. Board wird exportiert, Python-Server startet, Browser oeffnet Report.   }
-{   3. Im Browser "In Altium fixen" klicken -> Endpunkt wandert sofort.        }
-{   4. Zum Beenden: das schwarze Python-Konsolenfenster schliessen.            }
+{  Warum ein Formular mit Timer statt einer Schleife: Eine Endlosschleife auf  }
+{  Altiums Haupt-Thread friert Altium ein. Der Timer im (modalen) Formular     }
+{  wird ueber die Nachrichtenschleife bedient und blockiert nicht.             }
 {                                                                              }
-{  Bewusst OHNE im Code aufgebautes Formular / Event-Handler / ShowModal -     }
-{  DelphiScript ist dabei zickig ("Invalid procedure usage",                   }
-{  "Can't access top level variable"). Stattdessen InputBox + Polling-Schleife.}
-{                                                                              }
-{  Zahlen werden locale-unabhaengig mit Dezimal-PUNKT geschrieben und beim     }
-{  Lesen sowohl Punkt als auch Komma akzeptiert (deutsches Windows).           }
+{  Zahlen: locale-unabhaengig, Ausgabe mit Punkt, Lesen akzeptiert Punkt+Komma.}
 {..............................................................................}
+
+interface
+
+type
+  TVCForm = class(TForm)
+    LabelStatus : TLabel;
+    ButtonStop  : TButton;
+    TimerPoll   : TTimer;
+    procedure ButtonStopClick(Sender : TObject);
+    procedure TimerPollTimer(Sender : TObject);
+  end;
+
+var
+  VCForm : TVCForm;
+
+
+implementation
+
+{$R *.dfm}
 
 var
   Board      : IPCB_Board;
@@ -30,6 +52,7 @@ var
   RepoDir    : String;           // Ordner mit check_server.py (+ tracks.json)
   JsonPath   : String;
   PortPath   : String;
+  ServerMiss : Integer;          // wie oft /ping in Folge fehlschlug
 
 
 {------------------------------------------------------------------------------}
@@ -256,7 +279,6 @@ begin
   while (not FileExists(PortPath)) and (tries < 40) do
   begin
     Sleep(250);
-    Application.ProcessMessages;
     Inc(tries);
   end;
   if not FileExists(PortPath) then
@@ -274,7 +296,6 @@ begin
   while (HttpGet(BaseUrl + '/ping') <> 'pong') and (tries < 20) do
   begin
     Sleep(200);
-    Application.ProcessMessages;
     Inc(tries);
   end;
 
@@ -388,26 +409,35 @@ end;
 
 
 {------------------------------------------------------------------------------}
-{ Polling-Schleife: laeuft, bis der Server nicht mehr erreichbar ist           }
-{ (User schliesst das Python-Konsolenfenster).                                 }
+{ Formular-Ereignisse                                                          }
 {------------------------------------------------------------------------------}
-procedure PollLoop;
-var
-  misses : Integer;
+// Timer: laeuft nur, solange das (modale) Fenster offen ist -> blockiert nicht.
+procedure TVCForm.TimerPollTimer(Sender : TObject);
 begin
-  misses := 0;
-  while misses < 10 do          // ~4 s ohne Server -> Ende
+  if HttpGet(BaseUrl + '/ping') = 'pong' then
   begin
-    if HttpGet(BaseUrl + '/ping') = 'pong' then
+    ServerMiss := 0;
+    PollOnce;
+    LabelStatus.Caption :=
+      'Laeuft. Im Browser "In Altium fixen" klicken - Endpunkte wandern sofort.' +
+      #13#10 + 'Beenden: unten stoppen oder das Python-Fenster schliessen.';
+  end
+  else
+  begin
+    Inc(ServerMiss);
+    if ServerMiss >= 6 then      // ~3 s ohne Server
     begin
-      misses := 0;
-      PollOnce;
-    end
-    else
-      Inc(misses);
-    Sleep(400);
-    Application.ProcessMessages;
+      TimerPoll.Enabled := False;
+      LabelStatus.Caption :=
+        'Server beendet (Python-Fenster geschlossen). Dieses Fenster kann zu.';
+    end;
   end;
+end;
+
+procedure TVCForm.ButtonStopClick(Sender : TObject);
+begin
+  TimerPoll.Enabled := False;
+  Close;
 end;
 
 
@@ -419,6 +449,7 @@ var
   py, repo, wishPort : String;
 begin
   BaseUrl := '';
+  ServerMiss := 0;
   TrackList := TInterfaceList.Create;
   try
     py := InputBox('Verbindungs-Check',
@@ -449,16 +480,13 @@ begin
     if not ExportBoard then Exit;
     if not StartServer(py, wishPort) then Exit;
 
-    ShowMessage('Server laeuft: ' + BaseUrl + #13#10#13#10 +
-                'Im Browser die Fixe anklicken - die Endpunkte wandern sofort ' +
-                'im Board (jeder Fix ist ein eigener Undo-Schritt).' + #13#10#13#10 +
-                'Zum BEENDEN das schwarze Python-Konsolenfenster schliessen. ' +
-                'Danach ist die Aktion hier fertig.');
-
-    PollLoop;
-
-    ShowMessage('Verbindungs-Check beendet.');
+    // Modales Fenster mit Timer -> Live-Uebernahme ohne Altium einzufrieren.
+    VCForm := TVCForm.Create(nil);
+    VCForm.ShowModal;
+    VCForm.Free;
   finally
     TrackList.Free;
   end;
 end;
+
+end.
