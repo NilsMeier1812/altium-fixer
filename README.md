@@ -34,6 +34,13 @@ Layer lassen sich im Report zusätzlich über die **Layer-Filterleiste** live
 ein-/ausblenden (Checkbox je Layer mit Fehleranzahl, plus „alle"/„keine"); der
 „offen"-Zähler zählt nur die eingeblendeten Layer.
 
+**Tracks ohne Net werden ebenfalls übersprungen.** Das sind vor allem die
+Füllprimitive von Kupferflächen/Polygonen – sie tragen kein Net, machen aber
+oft den Großteil der Objekte aus (z. B. 300k+). Die Analyse braucht das Net
+ohnehin (gruppiert nach Layer + Net), also fliegen sie raus. Das reduziert die
+Datenmenge drastisch und stellt sicher, dass jeder exportierte Track ein Net
+hat. Zum Prüfen der Net-Situation gibt es `DiagTests.VC_T8_NetCheck`.
+
 > **Große Boards:** Altium-Skripte iterieren einzeln über jedes Objekt – das ist
 > langsam. Während `RunVerbindungsCheck` läuft, ist Altium **einige Sekunden bis
 > ~1–2 Minuten nicht bedienbar** (ein Hinweis-Dialog kündigt das an). Das ist
@@ -61,11 +68,11 @@ pip install -r requirements.txt
 Der **Altium-Live-Modus** braucht keine Zusatzpakete.
 
 ### 2. Dieses Repo ablegen
-Den kompletten Ordner (z. B. nach `C:\Tools\altium-fixer`) legen. Wichtig ist,
-dass diese Struktur zusammenbleibt:
+Den kompletten Ordner nach **`C:\altium-track-fixer`** legen (dieser Pfad ist
+im Skript und in den `.bat`-Dateien **fest verdrahtet**). Struktur:
 
 ```
-altium-fixer\
+C:\altium-track-fixer\
   check_server.py
   check_excel.py
   start_watcher.bat         <- Hintergrund-Watcher (empfohlen, in den Autostart)
@@ -115,13 +122,13 @@ schreibt.
 > → *Customize* → Kategorie *Scripts*), dann genügt nach dem Klicken im
 > Browser ein Tastendruck.
 
-Das Skript fragt beim Start nur **einen** Wert ab:
-- **Arbeitsordner:** der Ordner mit `check_server.py` + `start_server.bat`,
-  z. B. `C:\Tools\altium-fixer` (dort landen auch `tracks.json` und die
-  Bridge-Dateien).
+Der Arbeitsordner ist **fest auf `C:\altium-track-fixer`** verdrahtet (Konstante
+`WORKDIR` oben in `VerbindungsCheck.pas`) – das Skript fragt nichts mehr ab.
+Liegt das Repo woanders, `WORKDIR` dort anpassen. Dorthin schreibt das Skript
+`tracks.json` und die Bridge-Dateien.
 
-> Python-Pfad/Port stehen in `start_server.bat`. Falls `python` nicht im PATH
-> ist, dort oben `set PY=C:\Pfad\zu\python.exe` eintragen.
+> Python-Pfad steht in `start_watcher.bat` / `start_server.bat`. Falls `python`
+> nicht im PATH ist, dort oben `set PY=C:\Pfad\zu\python.exe` eintragen.
 
 ---
 
@@ -132,9 +139,9 @@ Zwei Prozeduren, klar getrennt: **exportieren** (`RunVerbindungsCheck`) und
 
 1. Das gewünschte **`.PcbDoc` öffnen** und das **PCB-Fenster in den Vordergrund**
    holen (aktives Dokument – sonst ist der PCB-Server nicht bereit).
-2. **`RunVerbindungsCheck`** ausführen und den Arbeitsordner bestätigen.
-   - Liest alle Tracks und schreibt `tracks.json`. Ein kurzer Hinweis-Dialog
-     erscheint, dann ist Altium sofort wieder frei.
+2. **`RunVerbindungsCheck`** ausführen (kein Ordner-Dialog mehr – Pfad ist fest).
+   - Liest die Tracks (**ohne Top/Bottom, nur mit Net**) und schreibt
+     `tracks.json`. Ein Hinweis-Dialog kündigt die Wartezeit an.
    - Der Hintergrund-Watcher merkt das in ~1 s und **öffnet den Browser
      automatisch** mit dem Report. (Ohne Watcher: einmal `start_server.bat`
      doppelklicken.)

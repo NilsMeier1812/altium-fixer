@@ -22,12 +22,10 @@
 {  Zahlen locale-unabhaengig (Punkt raus beim Schreiben, Punkt+Komma rein).    }
 {..............................................................................}
 
-var
-  LastWorkDir : String;   // gemerkter Ordner (Vorbelegung fuer die naechste Abfrage)
-
 const
   MAX_ITER = 1000000;     // Not-Bremse: bricht ab, falls der Iterator nicht endet
                           // (bei ~10k Tracks/s entspricht das ca. 100 s Obergrenze)
+  WORKDIR  = 'C:\altium-track-fixer';   // fest verdrahteter Arbeitsordner
 
 
 {------------------------------------------------------------------------------}
@@ -146,31 +144,16 @@ end;
 
 
 {------------------------------------------------------------------------------}
-{ Arbeitsordner abfragen (mit Vorbelegung aus dem letzten Lauf)                 }
+{ Arbeitsordner pruefen (fest verdrahtet auf WORKDIR)                           }
 {------------------------------------------------------------------------------}
-function AskWorkDir : String;
-var repo, dflt : String;
+function CheckWorkDir : Boolean;
 begin
-  Result := '';
-  if LastWorkDir <> '' then dflt := LastWorkDir
-  else                      dflt := 'C:\Pfad\zu\altium-fixer';
-
-  repo := InputBox('Verbindungs-Check',
-                   'Arbeitsordner (enthaelt check_server.py):', dflt);
-  repo := Trim(repo);
-  if repo = '' then Exit;
-  if Copy(repo, Length(repo), 1) = '\' then
-    repo := Copy(repo, 1, Length(repo) - 1);
-
-  if not FileExists(repo + '\check_server.py') then
-  begin
+  Result := FileExists(WORKDIR + '\check_server.py');
+  if not Result then
     ShowMessage('check_server.py nicht gefunden unter:' + #13#10 +
-                repo + '\check_server.py');
-    Exit;
-  end;
-
-  LastWorkDir := repo;
-  Result := repo;
+                WORKDIR + '\check_server.py' + #13#10#13#10 +
+                'Bitte das Repo nach ' + WORKDIR + ' legen (oder die Konstante ' +
+                'WORKDIR oben im Skript anpassen).');
 end;
 
 
@@ -189,13 +172,13 @@ var
   x1, y1, x2, y2, wd : Double;
   ox, oy  : TCoord;
   first, runaway : Boolean;
-  id, skipped, iterated : Integer;
+  id, skipped, netless, iterated : Integer;
 begin
   Board := GetBoard;
   if Board = nil then Exit;
 
-  WorkDir := AskWorkDir;
-  if WorkDir = '' then Exit;
+  if not CheckWorkDir then Exit;
+  WorkDir := WORKDIR;
 
   JsonPath := WorkDir + '\tracks.json';
   CmdPath  := WorkDir + '\bridge_cmd.txt';
@@ -205,8 +188,8 @@ begin
   if FileExists(CmdPath) then DeleteFile(CmdPath);
   if FileExists(AckPath) then DeleteFile(AckPath);
 
-  ShowMessage('Lese jetzt die Tracks (ohne Top- und Bottom-Layer).' +
-    #13#10#13#10 + 'Bei grossen Boards kann das bis zu ~1-2 Minuten dauern - ' +
+  ShowMessage('Lese jetzt die Tracks (ohne Top/Bottom, nur mit Net).' +
+    #13#10#13#10 + 'Bei grossen Boards kann das einige Minuten dauern - ' +
     'Altium reagiert solange NICHT. Das ist normal, bitte NICHT abbrechen ' +
     'und nicht ueber den Task-Manager schliessen.');
 
@@ -228,6 +211,7 @@ begin
   first    := True;
   id       := 0;
   skipped  := 0;
+  netless  := 0;
   iterated := 0;
   runaway  := False;
   Trk := Iter.FirstPCBObject;
@@ -242,9 +226,15 @@ begin
     begin
       skipped := skipped + 1;
     end
+    // Tracks OHNE Net auslassen: das sind v.a. Polygon-/Flaechen-Fuellstuecke.
+    // Die Analyse braucht das Net ohnehin - ohne Net kein sinnvoller Check.
+    else if Trk.Net = nil then
+    begin
+      netless := netless + 1;
+    end
     else
     begin
-      if Trk.Net <> nil then netName := Trk.Net.Name else netName := '';
+      netName := Trk.Net.Name;
       layName := Board.LayerName(Trk.Layer);
 
       x1 := CoordToMMs(Trk.X1 - ox);
@@ -295,14 +285,18 @@ begin
 
   if id <= 0 then
   begin
-    ShowMessage('Keine Tracks exportiert (ohne Top/Bottom).' + #13#10 +
-      'Liegen alle Bahnen auf Top/Bottom? Dann in RunVerbindungsCheck die ' +
-      'Layer-Bedingung anpassen.');
+    ShowMessage('Keine verwertbaren Tracks exportiert.' + #13#10#13#10 +
+      'Top/Bottom uebersprungen: ' + IntToStr(skipped) + #13#10 +
+      'ohne Net uebersprungen: ' + IntToStr(netless) + #13#10#13#10 +
+      'Sind ' + IntToStr(netless) + ' ohne Net: dann fehlt dem Board die ' +
+      'Konnektivitaet (Nets), oder es sind nur Flaechen. Bitte VC_T8_NetCheck ' +
+      'ausfuehren.');
     Exit;
   end;
 
-  ShowMessage('tracks.json geschrieben: ' + IntToStr(id) + ' Tracks ' +
-    '(Top/Bottom uebersprungen: ' + IntToStr(skipped) + ').' +
+  ShowMessage('tracks.json geschrieben: ' + IntToStr(id) + ' Tracks mit Net.' +
+    #13#10 + '(Top/Bottom uebersprungen: ' + IntToStr(skipped) +
+    ', ohne Net: ' + IntToStr(netless) + ')' +
     #13#10#13#10 +
     'Laeuft der Hintergrund-Watcher (start_watcher.bat, am besten im ' +
     'Windows-Autostart), oeffnet sich der Browser-Report jetzt von selbst.' +
@@ -334,8 +328,8 @@ begin
   Board := GetBoard;
   if Board = nil then Exit;
 
-  WorkDir := AskWorkDir;
-  if WorkDir = '' then Exit;
+  if not CheckWorkDir then Exit;
+  WorkDir := WORKDIR;
 
   CmdPath := WorkDir + '\bridge_cmd.txt';
   AckPath := WorkDir + '\bridge_ack.txt';
@@ -366,8 +360,9 @@ begin
     Exit;
   end;
 
-  // id -> IPCB_Track rekonstruieren. WICHTIG: exakt wie beim Export iterieren
-  // und Top/Bottom ueberspringen, damit die IDs uebereinstimmen.
+  // id -> IPCB_Track rekonstruieren. WICHTIG: exakt dieselbe Auswahl wie beim
+  // Export (Top/Bottom UND netlose Tracks ueberspringen), sonst passen die IDs
+  // nicht mehr zusammen.
   parts := TStringList.Create;
 
   // hoechste benoetigte Track-ID ermitteln -> nur bis dahin iterieren.
@@ -393,7 +388,8 @@ begin
   begin
     iterated := iterated + 1;
     if iterated > MAX_ITER then begin runaway := True; Break; end;
-    if not ((Trk.Layer = eTopLayer) or (Trk.Layer = eBottomLayer)) then
+    if (Trk.Layer <> eTopLayer) and (Trk.Layer <> eBottomLayer)
+       and (Trk.Net <> nil) then
       TrackList.Add(Trk);
     if TrackList.Count > maxTid then Break;   // genug gesammelt
     Trk := Iter.NextPCBObject;

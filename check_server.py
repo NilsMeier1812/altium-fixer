@@ -45,6 +45,10 @@ from urllib.parse import urlparse, parse_qs
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from verbindungs_check.core import analyze_tracks, build_html  # noqa: E402
 
+# Fest verdrahteter Arbeitsordner (Repo liegt unter C:\altium-track-fixer).
+# Wird verwendet, wenn kein Pfad-Argument uebergeben wird.
+DEFAULT_DIR = r"C:\altium-track-fixer"
+
 
 class FixRegistry:
     """Haelt Fix-Kommandos, Zustaende und die Queue - threadsicher."""
@@ -414,7 +418,7 @@ def main():
 
     if args.watch:
         # ----- Watch-Modus: Ordner ueberwachen, wartet auf Altium -----
-        workdir = os.path.abspath(args.target or ".")
+        workdir = os.path.abspath(args.target or DEFAULT_DIR)
         if not os.path.isdir(workdir):
             print(f"Ordner nicht gefunden: {workdir}")
             sys.exit(1)
@@ -447,10 +451,8 @@ def main():
               "der Browser oeffnet dann automatisch. Beenden mit Strg+C.")
     else:
         # ----- Einmal-Modus: genau eine tracks.json -----
-        if not args.target:
-            print("Bitte tracks.json angeben oder --watch <ordner> nutzen.")
-            sys.exit(2)
-        json_path = os.path.abspath(args.target)
+        json_path = os.path.abspath(
+            args.target or os.path.join(DEFAULT_DIR, "tracks.json"))
         workdir = os.path.dirname(json_path)
         cmd_path = os.path.join(workdir, "bridge_cmd.txt")
         ack_path = os.path.join(workdir, "bridge_ack.txt")

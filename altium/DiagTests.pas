@@ -18,7 +18,8 @@
 {..............................................................................}
 
 const
-  SAFELIMIT = 200000;   // Not-Aus fuer Schleifen
+  SAFELIMIT = 200000;                   // Not-Aus fuer Schleifen
+  WORKDIR   = 'C:\altium-track-fixer';  // fester Arbeitsordner
 
 
 { --- T1: Laeuft ueberhaupt ein Skript? ------------------------------------- }
@@ -139,12 +140,7 @@ var
   sl  : TStringList;
   target : String;
 begin
-  dir := InputBox('T6', 'Arbeitsordner (dorthin wird eine Testdatei geschrieben):',
-                  'C:\Pfad\zu\altium-fixer');
-  dir := Trim(dir);
-  if dir = '' then begin ShowMessage('T6: abgebrochen.'); Exit; end;
-  if Copy(dir, Length(dir), 1) = '\' then dir := Copy(dir, 1, Length(dir) - 1);
-
+  dir := WORKDIR;
   target := dir + '\vc_test.txt';
   sl := TStringList.Create;
   sl.Add('Verbindungs-Check Test');
@@ -180,11 +176,7 @@ begin
   Board := PCBServer.GetCurrentPCBBoard;
   if Board = nil then begin ShowMessage('T7: Board = nil'); Exit; end;
 
-  dir := InputBox('T7', 'Arbeitsordner (dorthin tracks_test.json):',
-                  'C:\Pfad\zu\altium-fixer');
-  dir := Trim(dir);
-  if dir = '' then begin ShowMessage('T7: abgebrochen.'); Exit; end;
-  if Copy(dir, Length(dir), 1) = '\' then dir := Copy(dir, 1, Length(dir) - 1);
+  dir := WORKDIR;
   target := dir + '\tracks_test.json';
 
   sl := TStringList.Create;
@@ -237,4 +229,52 @@ begin
 
   ShowMessage('T7 ok - ' + IntToStr(id) + ' Tracks nach tracks_test.json ' +
               'geschrieben (max. ' + IntToStr(cap) + ').');
+end;
+
+
+{ --- T8: Net-Situation pruefen (warum sind die Nets leer?) ------------------ }
+{ Zaehlt in den ersten 20000 Tracks, wie viele ein Net / einen Net-Namen haben, }
+{ und zeigt ein paar Beispiele. So sehen wir, ob die Fuellprimitive-Theorie     }
+{ stimmt (viele ohne Net) oder ob der Net-Zugriff generell nicht liefert.       }
+procedure VC_T8_NetCheck;
+var
+  Board : IPCB_Board;
+  Iter  : IPCB_BoardIterator;
+  Trk   : IPCB_Track;
+  n, withNet, withName, shown : Integer;
+  samples : String;
+begin
+  if PCBServer = nil then begin ShowMessage('T8: PCBServer = nil'); Exit; end;
+  Board := PCBServer.GetCurrentPCBBoard;
+  if Board = nil then begin ShowMessage('T8: Board = nil'); Exit; end;
+
+  Iter := Board.BoardIterator_Create;
+  Iter.AddFilter_ObjectSet(MkSet(eTrackObject));
+  Iter.AddFilter_LayerSet(AllLayers);
+  Iter.AddFilter_Method(eProcessAll);
+
+  n := 0; withNet := 0; withName := 0; shown := 0; samples := '';
+  Trk := Iter.FirstPCBObject;
+  while (Trk <> nil) and (n < 20000) do
+  begin
+    n := n + 1;
+    if Trk.Net <> nil then
+    begin
+      withNet := withNet + 1;
+      if Trk.Net.Name <> '' then withName := withName + 1;
+      if shown < 8 then
+      begin
+        samples := samples + #13#10 + '  Layer=' + Board.LayerName(Trk.Layer) +
+                   '  Net="' + Trk.Net.Name + '"';
+        shown := shown + 1;
+      end;
+    end;
+    Trk := Iter.NextPCBObject;
+  end;
+  Board.BoardIterator_Destroy(Iter);
+
+  ShowMessage('T8 - von ' + IntToStr(n) + ' Tracks:' + #13#10 +
+    '  mit Net-Objekt: ' + IntToStr(withNet) + #13#10 +
+    '  mit Net-Namen:  ' + IntToStr(withName) + #13#10#13#10 +
+    'Beispiele (mit Net):' + samples);
 end;
