@@ -11,11 +11,17 @@
 {                                                                              }
 {  Voraussetzung: Python installiert, dieses Repo-Verzeichnis bekannt          }
 {  (enthaelt check_server.py + Ordner verbindungs_check).                      }
+{                                                                              }
+{  Hinweise:                                                                   }
+{   - Track-Referenzen liegen in einer TInterfaceList (Index = exportierte     }
+{     Track-ID). DelphiScript kennt kein "array of IPCB_Track" als Globale.    }
+{   - Zahlen werden bewusst locale-unabhaengig als Dezimal-PUNKT geschrieben   }
+{     und gelesen (deutsches Windows nutzt sonst Komma -> kaputtes JSON).      }
 {..............................................................................}
 
 var
   Board      : IPCB_Board;
-  TrackArr   : array of IPCB_Track;   // Index = exportierte Track-ID
+  TrackList  : TInterfaceList;   // Items[id] = IPCB_Track
   TrackCount : Integer;
   PollTimer  : TTimer;
   MainForm   : TForm;
@@ -29,6 +35,50 @@ var
   JsonPath   : String;
   PortPath   : String;
   Polling    : Boolean;
+
+
+{------------------------------------------------------------------------------}
+{ Locale-unabhaengige Zahl <-> String Umwandlung                               }
+{ (deutsches Windows nutzt Komma; wir wollen aber immer den Punkt).            }
+{------------------------------------------------------------------------------}
+function DecSep : String;
+var probe : String;
+begin
+  // Ermittelt den lokalen Dezimaltrenner (',' oder '.')
+  probe := FloatToStr(1.5);      // "1,5" oder "1.5"
+  Result := Copy(probe, 2, 1);
+end;
+
+// Double -> String, IMMER mit Punkt.
+function DotFloat(x : Double) : String;
+var s, sep, c, r : String; i : Integer;
+begin
+  s := FloatToStr(x);
+  sep := DecSep;
+  r := '';
+  for i := 1 to Length(s) do
+  begin
+    c := Copy(s, i, 1);
+    if c = sep then r := r + '.' else r := r + c;
+  end;
+  Result := r;
+end;
+
+// String -> Double, robust: akzeptiert Punkt UND Komma als Dezimaltrenner
+// (beides wird auf den lokalen Trenner normalisiert). Die Werte hier sind
+// einfache Dezimalzahlen ohne Tausendertrenner, daher eindeutig.
+function DotStrToFloat(const s : String) : Double;
+var sep, c, t : String; i : Integer;
+begin
+  sep := DecSep;
+  t := '';
+  for i := 1 to Length(s) do
+  begin
+    c := Copy(s, i, 1);
+    if (c = '.') or (c = ',') then t := t + sep else t := t + c;
+  end;
+  Result := StrToFloatDef(t, 0);
+end;
 
 
 {------------------------------------------------------------------------------}
@@ -46,10 +96,39 @@ begin
     CreateDir(Result);
 end;
 
+// JSON-String escapen (manuell, ohne Set-Syntax).
 function JsonEscape(const s : String) : String;
+var i : Integer; c, r : String;
 begin
-  Result := StringReplace(s, '\', '\\', MkSet(rfReplaceAll));
-  Result := StringReplace(Result, '"', '\"', MkSet(rfReplaceAll));
+  r := '';
+  for i := 1 to Length(s) do
+  begin
+    c := Copy(s, i, 1);
+    if c = '\' then r := r + '\\'
+    else if c = '"' then r := r + '\"'
+    else r := r + c;
+  end;
+  Result := r;
+end;
+
+// Zeile an ';' in eine Liste zerlegen (ohne StrictDelimiter/DelimitedText).
+procedure SplitSemi(const s : String; list : TStringList);
+var i : Integer; cur, c : String;
+begin
+  list.Clear;
+  cur := '';
+  for i := 1 to Length(s) do
+  begin
+    c := Copy(s, i, 1);
+    if c = ';' then
+    begin
+      list.Add(cur);
+      cur := '';
+    end
+    else
+      cur := cur + c;
+  end;
+  list.Add(cur);
 end;
 
 // HTTP GET ueber MSXML. Liefert responseText, oder '' bei Fehler.
@@ -90,6 +169,7 @@ var
   x1, y1, x2, y2, wd : Double;
   first   : Boolean;
   line    : String;
+  id      : Integer;
 begin
   Result := False;
   Board := PCBServer.GetCurrentPCBBoard;
@@ -99,8 +179,7 @@ begin
     Exit;
   end;
 
-  SetLength(TrackArr, 0);
-  TrackCount := 0;
+  TrackList.Clear;
 
   sl := TStringList.Create;
   sl.Add('{');
@@ -116,9 +195,8 @@ begin
   Trk := Iter.FirstPCBObject;
   while Trk <> nil do
   begin
-    // Track-Referenz merken; Index = ID
-    SetLength(TrackArr, TrackCount + 1);
-    TrackArr[TrackCount] := Trk;
+    id := TrackList.Count;      // ID = Index in der Liste
+    TrackList.Add(Trk);
 
     if Trk.Net <> nil then netName := Trk.Net.Name else netName := '';
     layName := Board.LayerName(Trk.Layer);
@@ -130,20 +208,19 @@ begin
     y2 := CoordToMMs(Trk.Y2 - Board.YOrigin);
     wd := CoordToMMs(Trk.Width);
 
-    line := '    {"id": ' + IntToStr(TrackCount) +
+    line := '    {"id": ' + IntToStr(id) +
             ', "layer": "' + JsonEscape(layName) + '"' +
             ', "net": "' + JsonEscape(netName) + '"' +
-            ', "x1": ' + FloatToStr(x1) +
-            ', "y1": ' + FloatToStr(y1) +
-            ', "x2": ' + FloatToStr(x2) +
-            ', "y2": ' + FloatToStr(y2) +
-            ', "width": ' + FloatToStr(wd) + '}';
+            ', "x1": ' + DotFloat(x1) +
+            ', "y1": ' + DotFloat(y1) +
+            ', "x2": ' + DotFloat(x2) +
+            ', "y2": ' + DotFloat(y2) +
+            ', "width": ' + DotFloat(wd) + '}';
     if not first then
       sl[sl.Count - 1] := sl[sl.Count - 1] + ',';
     sl.Add(line);
     first := False;
 
-    Inc(TrackCount);
     Trk := Iter.NextPCBObject;
   end;
   Board.BoardIterator_Destroy(Iter);
@@ -151,6 +228,7 @@ begin
   sl.Add('  ]');
   sl.Add('}');
 
+  TrackCount := TrackList.Count;
   JsonPath := TempFolder + '\tracks.json';
   PortPath := JsonPath + '.port';
   // altes Port-File entfernen, damit wir auf das neue warten koennen
@@ -252,8 +330,8 @@ var
   cx, cy : TCoord;
 begin
   Result := False;
-  if (tid < 0) or (tid >= TrackCount) then Exit;
-  Trk := TrackArr[tid];
+  if (tid < 0) or (tid >= TrackList.Count) then Exit;
+  Trk := TrackList.Items[tid];
   if Trk = nil then Exit;
 
   cx := Board.XOrigin + MMsToCoord(xmm);
@@ -327,8 +405,6 @@ begin
   lines := TStringList.Create;
   lines.Text := resp;
   parts := TStringList.Create;
-  parts.Delimiter := ';';
-  parts.StrictDelimiter := True;
 
   curFid := '';
   curOk  := True;
@@ -337,14 +413,14 @@ begin
   for i := 0 to lines.Count - 1 do
   begin
     if Trim(lines[i]) = '' then Continue;
-    parts.DelimitedText := lines[i];
+    SplitSemi(lines[i], parts);
     if parts.Count < 5 then Continue;
 
     fid   := parts[0];
     tid   := StrToIntDef(parts[1], -1);
     endNo := StrToIntDef(parts[2], 0);
-    xmm   := StrToFloatDef(parts[3], 0);
-    ymm   := StrToFloatDef(parts[4], 0);
+    xmm   := DotStrToFloat(parts[3]);
+    ymm   := DotStrToFloat(parts[4]);
 
     // Fix-Wechsel -> vorherigen bestaetigen
     if (curFid <> '') and (fid <> curFid) then
@@ -404,6 +480,7 @@ var
 begin
   Polling := False;
   BaseUrl := '';
+  TrackList := TInterfaceList.Create;
 
   MainForm := TForm.Create(nil);
   MainForm.Caption := 'Verbindungs-Check (Altium-Live)';
@@ -463,4 +540,5 @@ begin
 
   PollTimer.Enabled := False;
   MainForm.Free;
+  TrackList.Free;
 end;
