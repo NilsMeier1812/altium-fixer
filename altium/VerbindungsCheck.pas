@@ -145,10 +145,34 @@ var
   id      : Integer;
 begin
   Result := False;
-  Board := PCBServer.GetCurrentPCBBoard;
+
+  // 1) PCB-API-Server selbst pruefen. Ist er nil, wuerde der Aufruf von
+  //    GetCurrentPCBBoard sonst eine Access Violation werfen (nicht nil
+  //    zurueckgeben). Passiert, wenn kein PCB-Editor/-Dokument aktiv ist.
+  if PCBServer = nil then
+  begin
+    ShowMessage('PCB-Server ist nicht verfuegbar.' + #13#10#13#10 +
+      'Bitte ein .PcbDoc oeffnen und dieses PCB-Fenster in den Vordergrund ' +
+      'holen (aktives Dokument), dann das Skript erneut starten.');
+    Exit;
+  end;
+
+  // 2) Aktuelles Board holen - defensiv, damit ein Fehler eine klare Meldung
+  //    gibt statt eines rohen Absturzes.
+  Board := nil;
+  try
+    Board := PCBServer.GetCurrentPCBBoard;
+  except
+    ShowMessage('Konnte das aktuelle PCB-Board nicht lesen.' + #13#10#13#10 +
+      'Ist ein .PcbDoc geoeffnet UND als aktives Fenster im Vordergrund? ' +
+      'Bitte das PCB-Dokument anklicken und das Skript erneut starten.');
+    Exit;
+  end;
+
   if Board = nil then
   begin
-    ShowMessage('Kein PCB-Dokument aktiv. Bitte ein .PcbDoc oeffnen.');
+    ShowMessage('Kein PCB-Dokument aktiv. Bitte ein .PcbDoc oeffnen und das ' +
+      'PCB-Fenster in den Vordergrund holen.');
     Exit;
   end;
 
@@ -276,6 +300,11 @@ begin
     Exit;
   end;
   // Nur anwenden, wenn das urspruengliche Board aktiv ist.
+  if PCBServer = nil then
+  begin
+    LabelStatus.Caption := 'PCB-Server nicht verfuegbar - PCB-Fenster aktivieren.';
+    Exit;
+  end;
   if PCBServer.GetCurrentPCBBoard <> Board then
   begin
     LabelStatus.Caption := 'Anderes Dokument aktiv - urspruengliches PcbDoc waehlen.';
