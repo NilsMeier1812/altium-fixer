@@ -53,10 +53,11 @@ end;
 
 procedure RunFormTest;
 begin
+  // In Altium-Formular-Skripten wird die Form aus der .dfm AUTOMATISCH erzeugt.
+  // Also NICHT selbst mit .Create anlegen (der Klassenname ist kein nutzbarer
+  // Bezeichner) - einfach die vorhandene Instanz FormTestForm anzeigen.
   TickCount := 0;
-  FormTestForm := TFormTestForm.Create(nil);
   FormTestForm.ShowModal;
-  FormTestForm.Free;
 end;
 
 end.
