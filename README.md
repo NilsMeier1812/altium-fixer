@@ -53,24 +53,27 @@ altium-fixer\
   check_server.py
   check_excel.py
   verbindungs_check\        <- Analyse-Kern (nicht umbenennen)
-  altium\VerbindungsCheck.pas
+  altium\VerbindungsCheck.pas   <- Skript-Code
+  altium\VerbindungsCheck.dfm   <- Formular (gehört zwingend dazu!)
+  altium\VerbindungsCheck.PrjScr
 ```
 
+> **Wichtig:** `.pas` und `.dfm` müssen zusammen im selben Ordner liegen und
+> gleich heißen. Das Formular (mit Timer) ist der Grund, warum die Live-
+> Übernahme läuft, ohne Altium einzufrieren.
+
 ### 3. Altium-Skript einbinden
-1. In Altium: **DXP → Run Script…** (bzw. **File → Run Script…**).
-2. **Browse** → `altium\VerbindungsCheck.pas` auswählen (oder das Projekt
-   `altium\VerbindungsCheck.PrjScr` über **File → Open** laden).
-3. In der Liste die Prozedur **`RunVerbindungsCheck`** wählen → **OK**.
+1. In Altium: **File → Open** → `altium\VerbindungsCheck.PrjScr` (das Skript-
+   projekt öffnen – so werden `.pas` und `.dfm` als Paar geladen).
+2. Alternativ **DXP → Run Script… → Browse** → `altium\VerbindungsCheck.pas`
+   (die `.dfm` daneben wird automatisch mitgeladen).
+3. Die Prozedur **`RunVerbindungsCheck`** wählen → **OK**.
 
 Beim Start fragt das Skript in drei kleinen Dialogen ab:
 - **Python-Programm:** `python` (oder der volle Pfad zur `python.exe`).
 - **Skript-Ordner:** der Ordner mit `check_server.py`, z. B. `C:\Tools\altium-fixer`
   (dort wird auch `tracks.json` abgelegt).
 - **Port:** `8765` (Standard reicht; wird bei Belegung automatisch hochgezählt).
-
-> Das Skript braucht bewusst **kein** eigenes Fenster mit Buttons: DelphiScript
-> ist bei im Code aufgebauten Formularen/Events zickig. Die Bedienung läuft
-> daher über die drei Dialoge und danach über den Browser.
 
 ---
 
@@ -79,8 +82,8 @@ Beim Start fragt das Skript in drei kleinen Dialogen ab:
 1. Das gewünschte **`.PcbDoc` öffnen und aktiv** haben.
 2. Skript starten (`RunVerbindungsCheck`) und die drei Dialoge bestätigen.
    - Das Skript liest alle Tracks, schreibt `tracks.json`, startet Python.
-   - Ein **schwarzes Konsolenfenster** (Python) geht auf und der **Browser**
-     öffnet den Report. Ein Hinweisdialog in Altium bestätigt, dass es läuft.
+   - Ein **schwarzes Konsolenfenster** (Python) geht auf, der **Browser** öffnet
+     den Report, und in Altium erscheint ein **kleines Status-Fenster** („läuft").
 3. Im Report jeden Fehler prüfen. Passt der grün markierte Zielpunkt, auf
    **„In Altium fixen"** klicken.
    - Der Endpunkt wandert **sofort** im Board an die richtige Stelle.
@@ -89,12 +92,14 @@ Beim Start fragt das Skript in drei kleinen Dialogen ab:
 4. Betrifft ein späterer Fix einen schon geänderten Track, wird der Block als
    **veraltet** markiert – dann einfach den Check neu starten für den
    aktuellen Stand.
-5. **Zum Beenden:** das schwarze **Python-Konsolenfenster schließen**. Das Skript
-   merkt, dass der Server weg ist, beendet die Live-Übernahme und meldet „fertig".
+5. **Zum Beenden:** im Altium-Status-Fenster **„Stoppen/Schließen"** klicken,
+   oder das schwarze **Python-Fenster schließen** (das Status-Fenster merkt das
+   und meldet „beendet"). Danach das Python-Fenster schließen.
 
-Während des Live-Fixens läuft das Skript in Altium (Polling-Schleife) – Altium
-ist dabei mit dieser Aktion beschäftigt, das Board wird aber bei jedem Fix
-aktualisiert. Es läuft alles lokal (`127.0.0.1`), keine Firewall-Freigabe nötig.
+Während des Live-Fixens ist das kleine Status-Fenster in Altium offen; ein Timer
+darin holt die Klicks ab und aktualisiert das Board bei jedem Fix. Altium bleibt
+dabei bedienbar (der Timer blockiert nicht). Es läuft alles lokal (`127.0.0.1`),
+keine Firewall-Freigabe nötig.
 
 ---
 
