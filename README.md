@@ -68,7 +68,8 @@ im Skript und in den `.bat`-Dateien **fest verdrahtet**). Struktur:
 C:\altium-track-fixer\
   check_server.py
   check_excel.py
-  start_watcher.bat         <- Hintergrund-Watcher (empfohlen, in den Autostart)
+  start_watcher_hidden.vbs  <- Watcher UNSICHTBAR starten (empfohlen, in den Autostart)
+  start_watcher.bat         <- Watcher mit sichtbarem Fenster (zum Debuggen)
   start_server.bat          <- Einmal-Server (Alternative, pro Durchlauf 1 Klick)
   verbindungs_check\        <- Analyse-Kern (nicht umbenennen)
   altium\VerbindungsCheck.pas   <- Skript-Code (Export + Holen-Fenster)
@@ -98,13 +99,18 @@ auf `tracks.json` und öffnet den Report **von selbst**, sobald Altium sie
 schreibt.
 
 1. **Win+R** → `shell:startup` → Enter (öffnet den Autostart-Ordner).
-2. Rechtsklick → **Neu → Verknüpfung** → als Ziel `start_watcher.bat` wählen.
-3. Fertig. Ab dem nächsten Login läuft der Watcher automatisch (ein kleines
-   Konsolenfenster; kann minimiert bleiben).
+2. **`start_watcher_hidden.vbs`** (oder eine Verknüpfung darauf) dort hineinlegen.
+3. Fertig. Ab dem nächsten Login läuft der Watcher automatisch – **komplett
+   unsichtbar**, kein schwarzes Konsolenfenster.
 
-> Sofort testen ohne Neustart: `start_watcher.bat` einmal doppelklicken.
-> Ohne Autostart bleibt die Alternative `start_server.bat` (einmal pro
-> Durchlauf doppelklicken) – siehe unten.
+> **Kein Fenster:** `start_watcher_hidden.vbs` startet den Server über
+> `pythonw.exe` (Python ohne Konsole) und mit verstecktem Fenster. Ist `pythonw`
+> nicht im PATH, oben in der `.vbs` den vollen Pfad eintragen
+> (`PY = "C:\Python312\pythonw.exe"`). **Beenden** (läuft ja unsichtbar):
+> Task-Manager → Prozess `pythonw.exe`.
+>
+> Zum **Debuggen** stattdessen `start_watcher.bat` doppelklicken – die zeigt das
+> Konsolenfenster mit Log-Ausgaben. `start_server.bat` bleibt die Einmal-Variante.
 
 ### 3. Altium-Skript einbinden
 1. In Altium: **File → Open** → `altium\VerbindungsCheck.PrjScr` (Skriptprojekt).
@@ -212,7 +218,8 @@ verbindungs_check/core.py   Analyse, Fix-Berechnung (compute_fix), HTML/SVG
 check_server.py             Server (stdlib): HTTP für Browser + Datei-Bridge zu Altium
                             (--watch = dauerhaft, öffnet Report automatisch)
 check_excel.py              Excel-Fallback (pandas/openpyxl + tkinter)
-start_watcher.bat           Hintergrund-Watcher (in den Autostart) – Server läuft dauerhaft
+start_watcher_hidden.vbs    Watcher unsichtbar starten (pythonw, kein Fenster) – für den Autostart
+start_watcher.bat           Watcher mit sichtbarem Konsolenfenster (Debug)
 start_server.bat            Einmal-Server (Alternative; Altium kann keinen Prozess starten)
 altium/VerbindungsCheck.pas DelphiScript: RunVerbindungsCheck (Export + Holen-Fenster) + ApplyFixes
 altium/VerbindungsCheck.dfm Formular (Status + "Aenderungen uebernehmen" + "Fertig")
