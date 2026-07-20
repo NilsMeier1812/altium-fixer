@@ -26,8 +26,10 @@ Protokoll (bewusst primitiv, damit DelphiScript kein JSON parsen muss):
   GET  /                     -> HTML-Report (aktueller Stand)
   GET  /status               -> JSON {states:{fix_id:state}, stale:[...], gen:N}
   POST /fix   {fix_id:"..."} -> Fix in die Queue legen
+  POST /locate {x,y}|{clear} -> Sprung-Ziel setzen/loeschen (nur EIN Punkt)
   bridge_cmd.txt  (Datei)    -> offene Fixes "fix_id;track;end;x;y"
   bridge_ack.txt  (Datei)    -> Bestaetigungen "fix_id;1"
+  bridge_jump.txt (Datei)    -> Sprung-Ziel "x_mm;y_mm" (Altium zoomt hin)
 
 Reine Standardbibliothek.
 """
@@ -147,6 +149,25 @@ class AppState:
         self.doc = ""
         self.registry = None
         self.html_bytes = _waiting_html().encode("utf-8")
+        self.jump_path = None   # bridge_jump.txt (wird in main() gesetzt)
+
+    def write_jump(self, x, y):
+        """Sprung-Ziel fuer Altium setzen (x,y in mm) oder loeschen (x/y=None)."""
+        path = self.jump_path
+        if not path:
+            return False
+        try:
+            if x is None or y is None:
+                if os.path.exists(path):
+                    os.remove(path)
+            else:
+                tmp = path + ".tmp"
+                with open(tmp, "w", encoding="utf-8") as f:
+                    f.write(f"{x:.6f};{y:.6f}")
+                os.replace(tmp, path)
+            return True
+        except OSError:
+            return False
 
     def set_report(self, html_bytes, registry, doc):
         with self.lock:
@@ -252,6 +273,28 @@ def make_handler(state):
                 self._send(200, "application/json",
                            json.dumps({"ok": ok, "error": None if ok else msg,
                                        "msg": msg}))
+            elif u.path == "/locate":
+                # Sprung-Ziel setzen (nur EIN Punkt) oder loeschen.
+                length = int(self.headers.get("Content-Length", 0) or 0)
+                raw = self.rfile.read(length) if length else b""
+                try:
+                    data = json.loads(raw.decode("utf-8")) if raw else {}
+                except (ValueError, UnicodeDecodeError):
+                    self._send(400, "application/json",
+                               json.dumps({"ok": False, "error": "bad json"}))
+                    return
+                if data.get("clear"):
+                    ok = state.write_jump(None, None)
+                else:
+                    try:
+                        x = float(data.get("x"))
+                        y = float(data.get("y"))
+                    except (TypeError, ValueError):
+                        self._send(400, "application/json",
+                                   json.dumps({"ok": False, "error": "bad coords"}))
+                        return
+                    ok = state.write_jump(x, y)
+                self._send(200, "application/json", json.dumps({"ok": bool(ok)}))
             else:
                 self._send(404, "text/plain", "not found")
 
@@ -293,10 +336,10 @@ def start_server(port, handler_cls, max_tries=25):
     raise RuntimeError(f"Kein freier Port ab {port} gefunden.")
 
 
-def clear_bridge(cmd_path, ack_path):
-    for p in (cmd_path, ack_path):
+def clear_bridge(*paths):
+    for p in paths:
         try:
-            if os.path.exists(p):
+            if p and os.path.exists(p):
                 os.remove(p)
         except OSError:
             pass
@@ -362,8 +405,8 @@ def _stable_stat(path):
         return None
 
 
-def watch_loop(state, json_path, cmd_path, ack_path, url, open_browser,
-               stop_event):
+def watch_loop(state, json_path, cmd_path, ack_path, jump_path, url,
+               open_browser, stop_event):
     """
     Ueberwacht json_path. Bei einer neuen/geaenderten (und fertig geschriebenen)
     tracks.json wird der Report neu gebaut, die Bridge zurueckgesetzt und der
@@ -386,7 +429,7 @@ def watch_loop(state, json_path, cmd_path, ack_path, url, open_browser,
                 time.sleep(0.5)
                 continue
             last_sig = sig2
-            clear_bridge(cmd_path, ack_path)   # frische Sitzung
+            clear_bridge(cmd_path, ack_path, jump_path)   # frische Sitzung
             gen = state.set_report(html_bytes, registry, doc)
             print(f"[#{gen}] Neuer Report: {doc}  "
                   f"({ntr} Tracks, {nerr} Fehler, {nov} Ueberlappungen)")
@@ -425,7 +468,9 @@ def main():
         json_path = os.path.join(workdir, "tracks.json")
         cmd_path = os.path.join(workdir, "bridge_cmd.txt")
         ack_path = os.path.join(workdir, "bridge_ack.txt")
-        clear_bridge(cmd_path, ack_path)
+        jump_path = os.path.join(workdir, "bridge_jump.txt")
+        state.jump_path = jump_path
+        clear_bridge(cmd_path, ack_path, jump_path)
 
         # falls schon eine tracks.json daliegt: gleich laden
         if os.path.exists(json_path):
@@ -441,8 +486,8 @@ def main():
                          args=(state, cmd_path, ack_path, stop_event),
                          daemon=True).start()
         threading.Thread(target=watch_loop,
-                         args=(state, json_path, cmd_path, ack_path, url,
-                               not args.no_open, stop_event),
+                         args=(state, json_path, cmd_path, ack_path, jump_path,
+                               url, not args.no_open, stop_event),
                          daemon=True).start()
 
         print(f"Watch-Modus aktiv. Ordner: {workdir}")
@@ -456,7 +501,9 @@ def main():
         workdir = os.path.dirname(json_path)
         cmd_path = os.path.join(workdir, "bridge_cmd.txt")
         ack_path = os.path.join(workdir, "bridge_ack.txt")
-        clear_bridge(cmd_path, ack_path)
+        jump_path = os.path.join(workdir, "bridge_jump.txt")
+        state.jump_path = jump_path
+        clear_bridge(cmd_path, ack_path, jump_path)
 
         html_bytes, registry, doc, ntr, nerr, nov = build_report(json_path)
         state.set_report(html_bytes, registry, doc)

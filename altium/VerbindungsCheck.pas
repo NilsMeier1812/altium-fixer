@@ -15,6 +15,10 @@
 {    5. "Fertig" beendet. Will man das Menue spaeter wieder oeffnen (ohne neuen  }
 {       Export): ApplyFixes ausfuehren - es zeigt genau dasselbe Fenster.        }
 {                                                                              }
+{  "Im Altium finden": Waehlt man im Browser bei EINEM Fehler "Im Altium finden",}
+{  wird beim naechsten "Uebernehmen" dorthin gezoomt und das Fenster bleibt ZU   }
+{  (modal wuerde die Sicht blockieren). Menue zurueck: ApplyFixes.               }
+{                                                                              }
 {  In der normalen Benutzung braucht man nur diese zwei Skripte:                 }
 {    RunVerbindungsCheck (Export + Menue)  und  ApplyFixes (Menue erneut).       }
 {                                                                              }
@@ -55,6 +59,7 @@ var
   JsonPath  : String;
   CmdPath   : String;           // bridge_cmd.txt  (Server -> Altium)
   AckPath   : String;           // bridge_ack.txt  (Altium -> Server)
+  JumpPath  : String;           // bridge_jump.txt (Server -> Altium: "x;y")
   ApplyRequested : Boolean;     // True = "Uebernehmen" (anwenden + Fenster neu)
 
 
@@ -269,6 +274,56 @@ end;
 
 
 {------------------------------------------------------------------------------}
+{ Sprung-Wunsch aus bridge_jump.txt ("x_mm;y_mm") -> im PCB dorthin zoomen.      }
+{ Rueckgabe: True, wenn ein Sprung ausgefuehrt wurde (dann Fenster ZU lassen).   }
+{------------------------------------------------------------------------------}
+function DoJump : Boolean;
+var
+  jl, parts : TStringList;
+  line : String;
+  xmm, ymm : Double;
+  cx, cy, r : TCoord;
+begin
+  Result := False;
+  if (Board = nil) or (JumpPath = '') then Exit;
+  if not FileExists(JumpPath) then Exit;
+
+  jl := TStringList.Create;
+  try
+    jl.LoadFromFile(JumpPath);
+  except
+    jl.Free;
+    Exit;   // gerade im Schreibvorgang -> beim naechsten Mal
+  end;
+
+  line := Trim(jl.Text);
+  jl.Free;
+  if line = '' then begin DeleteFile(JumpPath); Exit; end;
+
+  parts := TStringList.Create;
+  SplitSemi(line, parts);
+  if parts.Count >= 2 then
+  begin
+    xmm := DotStrToFloat(parts[0]);
+    ymm := DotStrToFloat(parts[1]);
+    cx  := Board.XOrigin + MMsToCoord(xmm);
+    cy  := Board.YOrigin + MMsToCoord(ymm);
+    r   := MMsToCoord(2.0);   // ~4x4 mm Ausschnitt um den Punkt
+    try
+      Board.GraphicalView_ZoomOnRect(cx - r, cy - r, cx + r, cy + r);
+      Board.GraphicalView_ZoomRedraw;
+      Result := True;
+    except
+      Result := False;
+    end;
+  end;
+  parts.Free;
+
+  DeleteFile(JumpPath);   // verbraucht -> beim naechsten Uebernehmen kein Re-Sprung
+end;
+
+
+{------------------------------------------------------------------------------}
 { Formular-Ereignisse                                                          }
 {------------------------------------------------------------------------------}
 procedure TVCForm.ButtonPullClick(Sender : TObject);
@@ -291,8 +346,14 @@ end;
 { Gemeinsame Menue-Schleife: "Uebernehmen" schliesst das Fenster, wendet die    }
 { offenen Fixes an (Fenster kurz zu -> Board wird sichtbar aktualisiert) und     }
 { oeffnet es wieder. "Fertig" beendet. Die Startmeldung setzt der Aufrufer.      }
+{                                                                              }
+{ Sonderfall "Im Altium finden": Hat man im Browser einen Punkt zum Anzeigen    }
+{ gewaehlt, liegt beim Uebernehmen bridge_jump.txt vor. Dann werden die Fixes    }
+{ angewendet, es wird zum Punkt gezoomt und das Fenster bleibt ZU (sonst        }
+{ blockiert das modale Fenster die Sicht). Menue holt man mit ApplyFixes zurueck.}
 {------------------------------------------------------------------------------}
 procedure RunApplyLoop;
+var n : Integer;
 begin
   repeat
     ApplyRequested := False;
@@ -300,10 +361,18 @@ begin
     if ApplyRequested then
     begin
       if (PCBServer <> nil) and (PCBServer.GetCurrentPCBBoard = Board) then
-        VCForm.LabelStatus.Caption :=
-          IntToStr(DoApply) + ' Endpunkt(e) uebernommen.' + #13#10#13#10 +
-          'Im Browser weiter anklicken und wieder "Aenderungen uebernehmen", ' +
-          'oder "Fertig". (Strg+Z macht die letzte Runde rueckgaengig.)'
+      begin
+        n := DoApply;
+        if DoJump then
+          // Sprung angefordert: Fixes sind drin, Ansicht ist am Punkt ->
+          // Fenster NICHT wieder oeffnen. (Zurueck ins Menue: ApplyFixes.)
+          ApplyRequested := False
+        else
+          VCForm.LabelStatus.Caption :=
+            IntToStr(n) + ' Endpunkt(e) uebernommen.' + #13#10#13#10 +
+            'Im Browser weiter anklicken und wieder "Aenderungen uebernehmen", ' +
+            'oder "Fertig". (Strg+Z macht die letzte Runde rueckgaengig.)';
+      end
       else
         VCForm.LabelStatus.Caption :=
           'Anderes Dokument aktiv - bitte das urspruengliche PcbDoc in den ' +
@@ -335,9 +404,11 @@ begin
   JsonPath := WorkDir + '\tracks.json';
   CmdPath  := WorkDir + '\bridge_cmd.txt';
   AckPath  := WorkDir + '\bridge_ack.txt';
+  JumpPath := WorkDir + '\bridge_jump.txt';
 
-  if FileExists(CmdPath) then DeleteFile(CmdPath);
-  if FileExists(AckPath) then DeleteFile(AckPath);
+  if FileExists(CmdPath)  then DeleteFile(CmdPath);
+  if FileExists(AckPath)  then DeleteFile(AckPath);
+  if FileExists(JumpPath) then DeleteFile(JumpPath);
 
   // Fortschrittsfenster MODELESS zeigen (Buttons aus), damit man waehrend des
   // langen Exports sieht, dass es laeuft. Application.ProcessMessages haelt das
@@ -562,6 +633,7 @@ begin
   JsonPath := WorkDir + '\tracks.json';
   CmdPath  := WorkDir + '\bridge_cmd.txt';
   AckPath  := WorkDir + '\bridge_ack.txt';
+  JumpPath := WorkDir + '\bridge_jump.txt';
 
   if (TrackList = nil) or (TrackList.Count = 0) or (BuiltForBoard <> Board) then
     if not RebuildTrackList then Exit;

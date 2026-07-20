@@ -588,7 +588,16 @@ def _error_block(e, group_lines, idx, server_mode):
 
     data_fix = f' data-fix-id="{esc(e["fix_id"])}"' if server_mode else ''
 
-    return f'''<div class="err" data-dist="{d:.5f}" data-overlap="{e["overlap"]:.2f}" data-layer="{esc(layer)}"{data_fix}>
+    # Punkt zum "Im Altium finden": die tatsaechliche Fehlerstelle = Mitte der
+    # beiden Ist-Endpunkte (mx,my). NICHT das Fix-Ziel - das kann bei fast
+    # parallelen Bahnen der ferne Geraden-Schnittpunkt sein.
+    data_loc = (f' data-locate-x="{mx:.6f}" data-locate-y="{my:.6f}"'
+                if server_mode else '')
+
+    locbtn = ('<button class="locbtn" onclick="doLocate(this)">Im Altium finden</button>'
+              if server_mode else '')
+
+    return f'''<div class="err" data-dist="{d:.5f}" data-overlap="{e["overlap"]:.2f}" data-layer="{esc(layer)}"{data_fix}{data_loc}>
   <div class="search">
     <code>{esc(search)}</code>
     <button onclick="cp(this)">Kopieren</button>
@@ -608,6 +617,7 @@ def _error_block(e, group_lines, idx, server_mode):
   <div class="status">
     <button class="stbtn" onclick="setState(this,'ignored')">Ignorieren</button>
     <button class="stbtn" onclick="setState(this,'fixed')">Behoben</button>
+    {locbtn}
     <span class="badge"></span>
   </div>
 </div>'''
@@ -802,6 +812,11 @@ _STYLE = """
     .stbtn:hover { background: #eef0f3; }
     .stbtn.on-ign { background: #97a1af; color: #fff; border-color: #97a1af; }
     .stbtn.on-fix { background: #1a7f37; color: #fff; border-color: #1a7f37; }
+    .locbtn { border: 1px solid #2f6fc0; background: #fff; color: #2f6fc0;
+              border-radius: 6px; padding: 5px 12px; cursor: pointer; font-size: 13px; }
+    .locbtn:hover { background: #eaf1fb; }
+    .locbtn.locate-on { background: #2f6fc0; color: #fff; border-color: #2f6fc0; }
+    .err.locate-sel { box-shadow: 0 0 0 2px #2f6fc0; }
     .badge { font-size: 12px; color: #5f6b7c; margin-left: auto; }
     .stalemsg { display: none; font-size: 12px; color: #8a6d1a; margin-top: 8px; }
     .err.stale .stalemsg { display: block; }
@@ -925,6 +940,33 @@ def _script(server_mode):
         var err = errByFix(fid);
         if (err && !err.classList.contains('fixed')) err.classList.add('stale');
       });
+    }
+    // ---- "Im Altium finden": genau EIN Punkt gleichzeitig ----
+    var locateSel = null;
+    function clearLocate(){
+      if (locateSel){
+        locateSel.classList.remove('locate-sel');
+        var b = locateSel.querySelector('.locbtn');
+        if (b) b.classList.remove('locate-on');
+      }
+      locateSel = null;
+    }
+    function doLocate(btn){
+      var err = btn.closest('.err');
+      if (locateSel === err){            // nochmal geklickt -> abwaehlen
+        clearLocate();
+        fetch('/locate', {method:'POST', headers:{'Content-Type':'application/json'},
+                          body: JSON.stringify({clear:true})}).catch(function(){});
+        return;
+      }
+      clearLocate();
+      locateSel = err;
+      err.classList.add('locate-sel');
+      btn.classList.add('locate-on');
+      var x = parseFloat(err.getAttribute('data-locate-x'));
+      var y = parseFloat(err.getAttribute('data-locate-y'));
+      fetch('/locate', {method:'POST', headers:{'Content-Type':'application/json'},
+                        body: JSON.stringify({x:x, y:y})}).catch(function(){});
     }
     var pageGen = null;
     function pollStatus(){

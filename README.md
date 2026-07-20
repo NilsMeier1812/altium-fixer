@@ -164,9 +164,18 @@ Liegt das Repo woanders, den Pfad in `VCWorkDir` anpassen. Dorthin schreibt das 
    die Zuordnung aus dem letzten Export noch im Speicher, ist das sofort da;
    sonst wird sie einmal neu aufgebaut (Board-Iteration, mit Fortschrittsfenster).
 
+**„Im Altium finden"** (eine Stelle im Board anschauen): Bei jedem Fehlerblock
+gibt es den Button **„Im Altium finden"**. Es lässt sich immer **nur einer**
+auswählen (nochmal klicken hebt die Auswahl auf). Klickst du danach in Altium auf
+**„Änderungen übernehmen"**, werden die anstehenden Fixes angewendet **und** die
+Ansicht springt (zoomt) auf diese Stelle – das Fenster bleibt dann **zu**, weil
+das modale Fenster sonst die Sicht in Altium blockiert. Zum Weiterarbeiten das
+Menü mit **`ApplyFixes`** wieder öffnen. (Der Sprung geht auf die tatsächliche
+Fehlerstelle, nicht auf das evtl. weit entfernte Fix-Ziel.)
+
 Browser ↔ Python läuft lokal über HTTP (`127.0.0.1`), Altium ↔ Python über
-Dateien im Arbeitsordner (`bridge_cmd.txt` / `bridge_ack.txt`) – keine
-Firewall-Freigabe nötig.
+Dateien im Arbeitsordner (`bridge_cmd.txt` / `bridge_ack.txt` / `bridge_jump.txt`)
+– keine Firewall-Freigabe nötig.
 
 > **Warum kein Timer / kein Auto-Poll?** Braucht es nicht. Ein Klick auf
 > „holen" zieht genau einmal alle offenen Fixes. Die Track-Liste liegt aus dem
