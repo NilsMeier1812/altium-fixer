@@ -296,9 +296,6 @@ var
   ox, oy : TCoord;
   first, runaway : Boolean;
   id, netless, skippedLayer, iterated : Integer;
-  nlLayers : TStringList;   // Diagnose: Anzahl netloser Tracks je Layer
-  lidx : Integer;
-  lkey, summary : String;
 begin
   Board := GetBoard;
   if Board = nil then Exit;
@@ -332,8 +329,6 @@ begin
   // Also NICHT aufraeumen, sondern einfach eine neue Liste anlegen - die alte
   // Referenz faellt weg (harmlos: ein paar Objekte pro Altium-Sitzung).
   TrackList := TInterfaceList.Create;
-
-  nlLayers := TStringList.Create;   // Values['<layer-int>'] = Anzahl netloser Tracks
 
   sl := TStringList.Create;
   sl.Add('{');
@@ -377,14 +372,6 @@ begin
     else if Trk.Net = nil then
     begin
       netless := netless + 1;
-      // Diagnose: netlose je Layer zaehlen (Schluessel = Layer-Name).
-      lkey := Board.LayerName(Trk.Layer);
-      lidx := nlLayers.IndexOfName(lkey);
-      if lidx < 0 then
-        nlLayers.Add(lkey + '=1')
-      else
-        nlLayers[lidx] := lkey + '=' +
-          IntToStr(StrToIntDef(nlLayers.ValueFromIndex[lidx], 0) + 1);
     end
     else
     begin
@@ -421,19 +408,11 @@ begin
   if runaway then
   begin
     sl.Free;
-    nlLayers.Free;
     try VCForm.Hide; except end;
     ShowMessage('Abgebrochen: mehr als ' + IntToStr(MAX_ITER) + ' Objekte ' +
       'durchlaufen, ohne ein Ende zu erreichen. Bitte melden.');
     Exit;
   end;
-
-  // Netlose je Layer als lesbaren Text (Layer-Nummer -> Layer-Name : Anzahl).
-  summary := '';
-  for lidx := 0 to nlLayers.Count - 1 do
-    summary := summary + '  ' + nlLayers.Names[lidx] + ': ' +
-      nlLayers.ValueFromIndex[lidx] + #13#10;
-  nlLayers.Free;
 
   sl.Add('  ]');
   sl.Add('}');
@@ -447,14 +426,6 @@ begin
   VCForm.ButtonPull.Enabled  := True;
   VCForm.ButtonClose.Enabled := True;
   try VCForm.Hide; except end;
-
-  // Diagnose-Ausgabe: auf welchen Layern sitzen die netlosen Tracks?
-  // Damit laesst sich entscheiden, ob man sie per LayerSet vorab wegfiltern kann.
-  if summary <> '' then
-    ShowMessage('Netlose Tracks je Layer (' + IntToStr(netless) + ' gesamt):' +
-      #13#10#13#10 + summary + #13#10 +
-      'Bitte diese Liste durchgeben - dann kann der Export diese Layer ggf. ' +
-      'gar nicht erst durchlaufen.');
 
   if id <= 0 then
   begin
