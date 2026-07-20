@@ -49,15 +49,17 @@ var
 implementation
 
 const
-  MAX_ITER = 1000000;     // Not-Bremse gegen ewige Iteration
+  MAX_ITER   = 1000000;   // Not-Bremse gegen ewige Iteration
+  MAX_TRACKS = 500000;    // Kapazitaet der Track-Zuordnung (statisches Array)
 
 var
   Board     : IPCB_Board;
-  // Dynamisches Array statt TInterfaceList: dieses DelphiScript erkennt bei
+  // STATISCHES Array statt TInterfaceList: dieses DelphiScript erkennt bei
   // TInterfaceList die Member nicht zuverlaessig (.Clear/.Free/.Count schlugen
-  // als "Undeclared identifier" fehl). Array + Zaehler brauchen nur Kern-
-  // Sprachmittel (SetLength / Index / Length) - da kann nichts "undeclared" sein.
-  TrackArr   : array of IPCB_Track;   // TrackArr[id] = IPCB_Track (id = Export-Index)
+  // als "Undeclared identifier" fehl) UND kennt keine dynamischen Arrays
+  // ("array of" -> "[ expected"). Ein festes Array + Zaehler braucht nur
+  // Index-Zugriff - da kann nichts scheitern. Grenze MAX_TRACKS grosszuegig.
+  TrackArr   : array[0 .. MAX_TRACKS - 1] of IPCB_Track;  // TrackArr[id] = Track
   TrackCount : Integer;               // gueltige Eintraege 0 .. TrackCount-1
   BuiltForBoard : IPCB_Board;   // Board, fuer das TrackArr gebaut wurde
   WorkDir   : String;
@@ -144,20 +146,19 @@ begin
   list.Add(cur);
 end;
 
-// TrackArr neu leeren (alte Referenzen freigeben).
+// TrackArr "leeren": nur den Zaehler zuruecksetzen. Alte Eintraege oberhalb
+// des neuen Zaehlers werden nie gelesen (Zugriffe pruefen tid < TrackCount).
 procedure TrackReset(Dummy : Integer);
 begin
-  SetLength(TrackArr, 0);
   TrackCount := 0;
 end;
 
-// Einen Track ans Ende von TrackArr haengen (Kapazitaet in Bloecken wachsen
-// lassen; TrackCount ist die gueltige Anzahl).
+// Einen Track ans Ende haengen. TrackCount zaehlt immer mit (= Export-Index),
+// gespeichert wird nur solange die feste Kapazitaet reicht (Ueberlauf-Schutz).
 procedure TrackAppend(Trk : IPCB_Track);
 begin
-  if TrackCount >= Length(TrackArr) then
-    SetLength(TrackArr, Length(TrackArr) + 8192);
-  TrackArr[TrackCount] := Trk;
+  if TrackCount < MAX_TRACKS then
+    TrackArr[TrackCount] := Trk;
   TrackCount := TrackCount + 1;
 end;
 
@@ -252,7 +253,7 @@ begin
       ymm   := DotStrToFloat(parts[4]);
 
       okMove := False;
-      if (tid >= 0) and (tid < TrackCount) then
+      if (tid >= 0) and (tid < TrackCount) and (tid < MAX_TRACKS) then
       begin
         Trk := TrackArr[tid];
         if Trk <> nil then
@@ -346,8 +347,11 @@ begin
       if parts.Count >= 3 then
       begin
         tid := StrToIntDef(parts[2], -1);
-        if (tid >= 0) and (tid < TrackCount) and (TrackArr[tid] <> nil) then
-          Board.CurrentLayer := TrackArr[tid].Layer;
+        if (tid >= 0) and (tid < TrackCount) and (tid < MAX_TRACKS) then
+        begin
+          if TrackArr[tid] <> nil then
+            Board.CurrentLayer := TrackArr[tid].Layer;
+        end;
       end;
       Board.GraphicalView_ZoomOnRect(cx - r, cy - r, cx + r, cy + r);
       Board.GraphicalView_ZoomRedraw;
@@ -576,7 +580,12 @@ begin
     Exit;
   end;
 
-  BuiltForBoard := Board;   // TrackList gehoert zu diesem Board (fuer ApplyFixes)
+  BuiltForBoard := Board;   // TrackArr gehoert zu diesem Board (fuer ApplyFixes)
+
+  if id > MAX_TRACKS then
+    ShowMessage('Achtung: ' + IntToStr(id) + ' Tracks - mehr als die Kapazitaet ' +
+      IntToStr(MAX_TRACKS) + '. Fixes an Tracks mit Index >= ' + IntToStr(MAX_TRACKS) +
+      ' koennen nicht angewendet werden. Bitte melden, dann wird die Grenze erhoeht.');
 
   RunApplyLoop(
     'Export fertig: ' + IntToStr(id) + ' Tracks (mit Net, ohne TOP/BOTTOM). ' +
