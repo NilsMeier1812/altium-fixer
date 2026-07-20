@@ -316,8 +316,9 @@ begin
   ox  := Board.XOrigin;
   oy  := Board.YOrigin;
 
-  if TrackList = nil then TrackList := TInterfaceList.Create;
-  TrackList.Clear;
+  // TInterfaceList kennt hier kein .Clear -> alte Liste freigeben, neu anlegen.
+  if TrackList <> nil then TrackList.Free;
+  TrackList := TInterfaceList.Create;
 
   sl := TStringList.Create;
   sl.Add('{');
@@ -476,8 +477,9 @@ begin
   parts.Free;
   cmd.Free;
 
-  if TrackList = nil then TrackList := TInterfaceList.Create;
-  TrackList.Clear;
+  // TInterfaceList kennt hier kein .Clear -> alte Liste freigeben, neu anlegen.
+  if TrackList <> nil then TrackList.Free;
+  TrackList := TInterfaceList.Create;
   Iter := Board.BoardIterator_Create;
   Iter.AddFilter_ObjectSet(MkSet(eTrackObject));
   Iter.AddFilter_LayerSet(AllLayers);
