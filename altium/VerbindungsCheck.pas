@@ -12,8 +12,11 @@
 {    4. Zurueck in Altium: Button "Aenderungen aus dem Browser holen" -> alle   }
 {       angeklickten Fixes werden EINMALIG angewendet. Das Fenster bleibt offen,}
 {       man kann im Browser weiter anklicken und erneut holen.                 }
-{    5. "Schliessen" beendet. Danach fuer weitere Fixes: ApplyFixes (baut die   }
-{       Zuordnung neu auf) oder RunVerbindungsCheck erneut.                     }
+{    5. "Fertig" beendet. Will man das Menue spaeter wieder oeffnen (ohne neuen  }
+{       Export): ApplyFixes ausfuehren - es zeigt genau dasselbe Fenster.        }
+{                                                                              }
+{  In der normalen Benutzung braucht man nur diese zwei Skripte:                 }
+{    RunVerbindungsCheck (Export + Menue)  und  ApplyFixes (Menue erneut).       }
 {                                                                              }
 {  Kein Timer/Polling noetig: ein Klick holt genau einmal. Die Track-Liste liegt}
 {  im Speicher (aus dem Export), daher ist das Holen sofort da - ohne erneute   }
@@ -47,6 +50,7 @@ const
 var
   Board     : IPCB_Board;
   TrackList : TInterfaceList;   // Items[id] = IPCB_Track (id = Export-Index)
+  BuiltForBoard : IPCB_Board;   // Board, fuer das TrackList gebaut wurde
   WorkDir   : String;
   JsonPath  : String;
   CmdPath   : String;           // bridge_cmd.txt  (Server -> Altium)
@@ -284,6 +288,32 @@ end;
 
 
 {------------------------------------------------------------------------------}
+{ Gemeinsame Menue-Schleife: "Uebernehmen" schliesst das Fenster, wendet die    }
+{ offenen Fixes an (Fenster kurz zu -> Board wird sichtbar aktualisiert) und     }
+{ oeffnet es wieder. "Fertig" beendet. Die Startmeldung setzt der Aufrufer.      }
+{------------------------------------------------------------------------------}
+procedure RunApplyLoop;
+begin
+  repeat
+    ApplyRequested := False;
+    VCForm.ShowModal;
+    if ApplyRequested then
+    begin
+      if (PCBServer <> nil) and (PCBServer.GetCurrentPCBBoard = Board) then
+        VCForm.LabelStatus.Caption :=
+          IntToStr(DoApply) + ' Endpunkt(e) uebernommen.' + #13#10#13#10 +
+          'Im Browser weiter anklicken und wieder "Aenderungen uebernehmen", ' +
+          'oder "Fertig". (Strg+Z macht die letzte Runde rueckgaengig.)'
+      else
+        VCForm.LabelStatus.Caption :=
+          'Anderes Dokument aktiv - bitte das urspruengliche PcbDoc in den ' +
+          'Vordergrund holen, dann erneut "Aenderungen uebernehmen".';
+    end;
+  until not ApplyRequested;
+end;
+
+
+{------------------------------------------------------------------------------}
 { 1) Export: Board -> tracks.json (+ TrackList im Speicher) -> Fenster          }
 {------------------------------------------------------------------------------}
 procedure RunVerbindungsCheck;
@@ -435,6 +465,8 @@ begin
     Exit;
   end;
 
+  BuiltForBoard := Board;   // TrackList gehoert zu diesem Board (fuer ApplyFixes)
+
   VCForm.LabelStatus.Caption :=
     'Export fertig: ' + IntToStr(id) + ' Tracks (mit Net, ohne TOP/BOTTOM). ' +
     'Uebersprungen: TOP/BOTTOM ' + IntToStr(skippedLayer) +
@@ -442,80 +474,33 @@ begin
     'Der Browser-Report sollte offen sein (sonst start_watcher.bat starten). ' +
     'Jetzt die Fehler im Browser anklicken, dann hier "Aenderungen uebernehmen".';
 
-  // Dauerschleife: "Uebernehmen" schliesst das Fenster, wendet die offenen Fixes
-  // an (Fenster ist dabei kurz zu -> Board wird sichtbar aktualisiert) und
-  // oeffnet es dann wieder. "Fertig" beendet.
-  repeat
-    ApplyRequested := False;
-    VCForm.ShowModal;
-    if ApplyRequested then
-    begin
-      if (PCBServer <> nil) and (PCBServer.GetCurrentPCBBoard = Board) then
-        VCForm.LabelStatus.Caption :=
-          IntToStr(DoApply) + ' Endpunkt(e) uebernommen.' + #13#10#13#10 +
-          'Im Browser weiter anklicken und wieder "Aenderungen uebernehmen", ' +
-          'oder "Fertig". (Strg+Z macht die letzte Runde rueckgaengig.)'
-      else
-        VCForm.LabelStatus.Caption :=
-          'Anderes Dokument aktiv - bitte das urspruengliche PcbDoc in den ' +
-          'Vordergrund holen, dann erneut "Aenderungen uebernehmen".';
-    end;
-  until not ApplyRequested;
+  RunApplyLoop;
 end;
 
 
 {------------------------------------------------------------------------------}
-{ 2) Fallback: nach dem Schliessen weitere Fixes anwenden (baut TrackList neu)  }
+{ TrackList ohne erneuten Export neu aufbauen (nur Board-Iteration, kein JSON).  }
+{ MUSS exakt denselben Filter/dieselbe Reihenfolge wie der Export nutzen, damit  }
+{ die IDs zu den im Browser gewaehlten Fixes passen. Iteriert das GANZE Board,   }
+{ nicht nur bis zur hoechsten ID - man kann im Browser ja neue Fehler anklicken. }
+{ Rueckgabe: True bei Erfolg.                                                   }
 {------------------------------------------------------------------------------}
-procedure ApplyFixes;
+function RebuildTrackList : Boolean;
 var
   Iter : IPCB_BoardIterator;
   Trk  : IPCB_Track;
-  cmd, parts : TStringList;
-  i, tid, maxTid, iterated, n : Integer;
+  iterated : Integer;
   runaway : Boolean;
 begin
-  Board := GetBoard;
-  if Board = nil then Exit;
-  if not CheckWorkDir then Exit;
-  WorkDir := VCWorkDir;
-  CmdPath := WorkDir + '\bridge_cmd.txt';
-  AckPath := WorkDir + '\bridge_ack.txt';
+  Result := False;
 
-  if not FileExists(CmdPath) then
-  begin
-    ShowMessage('Keine offenen Fixes (bridge_cmd.txt fehlt). Erst im Browser ' +
-      '"In Altium fixen" anklicken.');
-    Exit;
-  end;
+  VCForm.ButtonPull.Enabled  := False;
+  VCForm.ButtonClose.Enabled := False;
+  VCForm.LabelStatus.Caption :=
+    'Baue die Track-Zuordnung neu auf (kein neuer Export) ...' + #13#10#13#10 +
+    'Das kann bei grossen Boards einige Minuten dauern. Bitte NICHT abbrechen.';
+  try VCForm.Show; Application.ProcessMessages; except end;
 
-  cmd := TStringList.Create;
-  try cmd.LoadFromFile(CmdPath); except cmd.Free;
-    ShowMessage('bridge_cmd.txt nicht lesbar. Kurz warten und erneut.'); Exit;
-  end;
-  if Trim(cmd.Text) = '' then
-  begin
-    cmd.Free;
-    ShowMessage('Keine offenen Fixes. Im Browser zuerst anklicken.');
-    Exit;
-  end;
-
-  // hoechste benoetigte ID -> nur so weit iterieren.
-  parts := TStringList.Create;
-  maxTid := -1;
-  for i := 0 to cmd.Count - 1 do
-  begin
-    if Trim(cmd[i]) = '' then Continue;
-    SplitSemi(cmd[i], parts);
-    if parts.Count < 5 then Continue;
-    tid := StrToIntDef(parts[1], -1);
-    if tid > maxTid then maxTid := tid;
-  end;
-  parts.Free;
-  cmd.Free;
-
-  // Dieses DelphiScript erkennt bei TInterfaceList weder .Clear noch .Free.
-  // Also einfach eine neue Liste anlegen (alte Referenz faellt weg).
   TrackList := TInterfaceList.Create;
   Iter := Board.BoardIterator_Create;
   Iter.AddFilter_ObjectSet(MkSet(eTrackObject));
@@ -528,15 +513,28 @@ begin
   begin
     iterated := iterated + 1;
     if iterated > MAX_ITER then begin runaway := True; Break; end;
-    // Gleicher Filter wie beim Export: TOP/BOTTOM raus, nur Tracks mit Net,
-    // sonst passen die IDs nicht zu den im Browser gewaehlten Fixes.
+
+    if (iterated mod 5000) = 0 then
+    begin
+      VCForm.LabelStatus.Caption :=
+        'Baue die Track-Zuordnung neu auf ... bitte warten.' + #13#10#13#10 +
+        'Geprueft: ' + IntToStr(iterated) + #13#10 +
+        'Zugeordnet: ' + IntToStr(TrackList.Count);
+      try Application.ProcessMessages; except end;
+    end;
+
+    // Gleicher Filter wie beim Export: TOP/BOTTOM raus, nur Tracks mit Net.
     if (Trk.Layer <> eTopLayer) and (Trk.Layer <> eBottomLayer) and
        (Trk.Net <> nil) then
       TrackList.Add(Trk);
-    if TrackList.Count > maxTid then Break;
+
     Trk := Iter.NextPCBObject;
   end;
   Board.BoardIterator_Destroy(Iter);
+
+  VCForm.ButtonPull.Enabled  := True;
+  VCForm.ButtonClose.Enabled := True;
+  try VCForm.Hide; except end;
 
   if runaway then
   begin
@@ -544,9 +542,35 @@ begin
     Exit;
   end;
 
-  n := DoApply;
-  ShowMessage(IntToStr(n) + ' Endpunkt(e) angepasst. (Strg+Z macht die Runde ' +
-    'rueckgaengig.)');
+  BuiltForBoard := Board;
+  Result := True;
+end;
+
+
+{------------------------------------------------------------------------------}
+{ 2) Menue erneut oeffnen (ohne Export). Fuer den Fall, dass man das Fenster     }
+{    geschlossen hat und weiter fixen moechte. Verwendet die Zuordnung aus dem   }
+{    letzten Export wieder, wenn sie noch im Speicher liegt und zum aktuellen    }
+{    Board gehoert - sonst wird sie einmal neu aufgebaut.                        }
+{------------------------------------------------------------------------------}
+procedure ApplyFixes;
+begin
+  Board := GetBoard;
+  if Board = nil then Exit;
+  if not CheckWorkDir then Exit;
+  WorkDir  := VCWorkDir;
+  JsonPath := WorkDir + '\tracks.json';
+  CmdPath  := WorkDir + '\bridge_cmd.txt';
+  AckPath  := WorkDir + '\bridge_ack.txt';
+
+  if (TrackList = nil) or (TrackList.Count = 0) or (BuiltForBoard <> Board) then
+    if not RebuildTrackList then Exit;
+
+  VCForm.LabelStatus.Caption :=
+    'Menue erneut geoeffnet (kein neuer Export). Im Browser die Fehler ' +
+    'anklicken, dann "Aenderungen uebernehmen" - oder "Fertig".';
+
+  RunApplyLoop;
 end;
 
 end.

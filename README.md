@@ -26,7 +26,7 @@ Füllprimitive von Kupferflächen/Polygonen – sie tragen kein Net, machen aber
 den Großteil der Objekte aus (z. B. 300k+). Die Analyse braucht das Net ohnehin
 (gruppiert nach Layer + Net), also fliegen sie raus. Das reduziert die Datenmenge
 drastisch und stellt sicher, dass jeder exportierte Track ein Net hat. Zum Prüfen
-der Net-Situation gibt es `DiagTests.VC_T8_NetCheck`.
+der Net-Situation gibt es `VC_T8_NetCheck` in `altium\diagnose\DiagTests.pas`.
 
 **Layer im Report filtern:** Oben im Report gibt es eine **Layer-Filterleiste**
 (Checkbox je Layer mit Fehleranzahl, plus „alle"/„keine") – damit blendet man
@@ -120,9 +120,11 @@ schreibt.
 2. Alternativ **DXP → Run Script… → Browse** → `altium\VerbindungsCheck.pas`.
 3. Die Prozedur **`RunVerbindungsCheck`** wählen → **OK**.
 
-> `RunVerbindungsCheck` exportiert **und** öffnet danach das Fenster mit dem
-> Button „Änderungen aus dem Browser holen". `ApplyFixes` ist nur der Fallback,
-> falls das Fenster schon geschlossen ist.
+> In der normalen Benutzung braucht man genau **zwei Skripte**:
+> `RunVerbindungsCheck` (Export **und** öffnet danach das Menü mit „Änderungen
+> übernehmen" / „Fertig") und `ApplyFixes` (öffnet **dasselbe Menü erneut**,
+> falls man es geschlossen hat – **ohne** neuen Export). Mehr wird nicht
+> gebraucht. (Diagnose-Skripte für den Notfall liegen in `altium\diagnose\`.)
 
 Der Arbeitsordner ist **fest auf `C:\altium-track-fixer`** verdrahtet (Funktion
 `VCWorkDir` oben in `VerbindungsCheck.pas`) – das Skript fragt nichts mehr ab.
@@ -156,9 +158,11 @@ Liegt das Repo woanders, den Pfad in `VCWorkDir` anpassen. Dorthin schreibt das 
      Fixes auf **„Behoben in Altium"**. **`Strg+Z`** macht die Runde rückgängig.
    - Das ist eine **Dauerschleife:** im Browser weitere Fehler anklicken →
      wieder „Änderungen übernehmen" → usw. – **ohne** erneuten (langen) Export.
-5. **„Fertig"** beendet die Schleife und schließt das Fenster. Für weitere Fixes
-   danach: `ApplyFixes` (baut die Zuordnung neu auf – dauert wieder etwas) oder
-   `RunVerbindungsCheck` neu.
+5. **„Fertig"** beendet die Schleife und schließt das Fenster. Willst du das
+   Menü später wieder öffnen, **`ApplyFixes`** ausführen – es zeigt exakt dasselbe
+   Fenster mit „Änderungen übernehmen" / „Fertig", **ohne** neuen Export. Liegt
+   die Zuordnung aus dem letzten Export noch im Speicher, ist das sofort da;
+   sonst wird sie einmal neu aufgebaut (Board-Iteration, mit Fortschrittsfenster).
 
 Browser ↔ Python läuft lokal über HTTP (`127.0.0.1`), Altium ↔ Python über
 Dateien im Arbeitsordner (`bridge_cmd.txt` / `bridge_ack.txt`) – keine
@@ -224,8 +228,10 @@ check_excel.py              Excel-Fallback (pandas/openpyxl + tkinter)
 start_watcher_hidden.vbs    Watcher unsichtbar starten (pythonw, kein Fenster) – für den Autostart
 start_watcher.bat           Watcher mit sichtbarem Konsolenfenster (Debug)
 start_server.bat            Einmal-Server (Alternative; Altium kann keinen Prozess starten)
-altium/VerbindungsCheck.pas DelphiScript: RunVerbindungsCheck (Export + Holen-Fenster) + ApplyFixes
+altium/VerbindungsCheck.pas DelphiScript: RunVerbindungsCheck (Export + Menue) + ApplyFixes (Menue erneut)
 altium/VerbindungsCheck.dfm Formular (Status + "Aenderungen uebernehmen" + "Fertig")
+altium/VerbindungsCheck.PrjScr  Skriptprojekt (nur VerbindungsCheck.pas)
+altium/diagnose/            Diagnose-Skripte (DiagTests.pas) – nur bei Problemen
 tests/test_fixes.py         Geometrie- und Analyse-Tests
 ```
 
@@ -243,12 +249,13 @@ Grund für die Datei-Bridge: Das Altium-DelphiScript kennt hier kein
 `CreateOleObject` (kein HTTP/OLE aus Altium). Datei-I/O geht dagegen zuverlässig.
 
 Track-Identität: `RunVerbindungsCheck` vergibt die ID als **Iterations-Index**
-über die Tracks mit Net und hält die Referenzen im Fenster **im Speicher** –
-das „Holen" nutzt sie direkt (keine erneute Iteration). Der Fallback `ApplyFixes`
-(nach dem Schließen) iteriert das Board in **derselben Reihenfolge** erneut und
-rekonstruiert die Zuordnung. Wichtig: das **gleiche PcbDoc** muss aktiv sein und
-sollte zwischen Export und Anwenden nicht strukturell verändert werden (Tracks
-hinzufügen/löschen verschiebt die IDs).
+über die Tracks mit Net (ohne TOP/BOTTOM) und hält die Referenzen **im Speicher**
+– das „Übernehmen" nutzt sie direkt (keine erneute Iteration). `ApplyFixes`
+verwendet dieselbe Zuordnung wieder, solange sie im Speicher liegt und zum
+aktuellen Board gehört; sonst iteriert es das Board in **derselben Reihenfolge
+und mit demselben Filter** erneut und rekonstruiert sie. Wichtig: das **gleiche
+PcbDoc** muss aktiv sein und sollte zwischen Export und Anwenden nicht strukturell
+verändert werden (Tracks hinzufügen/löschen verschiebt die IDs).
 
 ---
 

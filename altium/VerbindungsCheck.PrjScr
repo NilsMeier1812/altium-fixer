@@ -6,12 +6,8 @@ ChannelComponentLevelSeparator=_
 NamingSourceUniqueID=
 
 [Documents]
-DocumentCount=2
+DocumentCount=1
 
 [Document1]
 DocumentPath=VerbindungsCheck.pas
-AnnotationEnabled=1
-
-[Document2]
-DocumentPath=DiagTests.pas
 AnnotationEnabled=1
