@@ -29,7 +29,8 @@ Protokoll (bewusst primitiv, damit DelphiScript kein JSON parsen muss):
   POST /locate {x,y}|{clear} -> Sprung-Ziel setzen/loeschen (nur EIN Punkt)
   bridge_cmd.txt  (Datei)    -> offene Fixes "fix_id;track;end;x;y"
   bridge_ack.txt  (Datei)    -> Bestaetigungen "fix_id;1"
-  bridge_jump.txt (Datei)    -> Sprung-Ziel "x_mm;y_mm" (Altium zoomt hin)
+  bridge_jump.txt (Datei)    -> Sprung-Ziel "x_mm;y_mm;track_id" (Altium zoomt
+                                hin + waehlt den Layer des Tracks)
 
 Reine Standardbibliothek.
 """
@@ -151,8 +152,11 @@ class AppState:
         self.html_bytes = _waiting_html().encode("utf-8")
         self.jump_path = None   # bridge_jump.txt (wird in main() gesetzt)
 
-    def write_jump(self, x, y):
-        """Sprung-Ziel fuer Altium setzen (x,y in mm) oder loeschen (x/y=None)."""
+    def write_jump(self, x, y, track=""):
+        """
+        Sprung-Ziel fuer Altium setzen ("x_mm;y_mm;track_id") oder loeschen
+        (x/y=None). track_id ist optional und liefert Altium den Layer.
+        """
         path = self.jump_path
         if not path:
             return False
@@ -163,7 +167,7 @@ class AppState:
             else:
                 tmp = path + ".tmp"
                 with open(tmp, "w", encoding="utf-8") as f:
-                    f.write(f"{x:.6f};{y:.6f}")
+                    f.write(f"{x:.6f};{y:.6f};{track}")
                 os.replace(tmp, path)
             return True
         except OSError:
@@ -293,7 +297,10 @@ def make_handler(state):
                         self._send(400, "application/json",
                                    json.dumps({"ok": False, "error": "bad coords"}))
                         return
-                    ok = state.write_jump(x, y)
+                    # track_id nur Ziffern zulassen (landet in einer Textdatei).
+                    track = str(data.get("track") or "")
+                    track = track if track.isdigit() else ""
+                    ok = state.write_jump(x, y, track)
                 self._send(200, "application/json", json.dumps({"ok": bool(ok)}))
             else:
                 self._send(404, "text/plain", "not found")

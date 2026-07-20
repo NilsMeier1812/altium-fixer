@@ -177,9 +177,11 @@ Liegt das Repo woanders, den Pfad in `VCWorkDir` anpassen. Dorthin schreibt das 
 gibt es den Button **„Im Altium finden"**. Es lässt sich immer **nur einer**
 auswählen (nochmal klicken hebt die Auswahl auf). Klickst du danach in Altium auf
 **„Änderungen übernehmen"**, werden die anstehenden Fixes angewendet **und** die
-Ansicht springt (zoomt) auf diese Stelle – das Fenster bleibt dann **zu**, weil
-das modale Fenster sonst die Sicht in Altium blockiert. Zum Weiterarbeiten das
-Menü mit **`ApplyFixes`** wieder öffnen. (Der Sprung geht auf die tatsächliche
+Ansicht springt (zoomt) auf diese Stelle – zusätzlich wird der **richtige Layer
+aktiv gesetzt** (der Layer des betroffenen Tracks), damit man nicht auf dem
+gerade aktiven Layer landet. Das Fenster bleibt dann **zu**, weil das modale
+Fenster sonst die Sicht in Altium blockiert. Zum Weiterarbeiten das Menü mit
+**`ApplyFixes`** wieder öffnen. (Der Sprung geht auf die tatsächliche
 Fehlerstelle, nicht auf das evtl. weit entfernte Fix-Ziel.)
 
 Browser ↔ Python läuft lokal über HTTP (`127.0.0.1`), Altium ↔ Python über

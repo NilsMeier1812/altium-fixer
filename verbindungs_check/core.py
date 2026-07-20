@@ -590,8 +590,10 @@ def _error_block(e, group_lines, idx, server_mode):
 
     # Punkt zum "Im Altium finden": die tatsaechliche Fehlerstelle = Mitte der
     # beiden Ist-Endpunkte (mx,my). NICHT das Fix-Ziel - das kann bei fast
-    # parallelen Bahnen der ferne Geraden-Schnittpunkt sein.
+    # parallelen Bahnen der ferne Geraden-Schnittpunkt sein. track_a liefert
+    # Altium den Layer (beide Tracks des Fehlers liegen im selben Layer+Net).
     data_loc = (f' data-locate-x="{mx:.6f}" data-locate-y="{my:.6f}"'
+                f' data-locate-track="{esc(e["track_a"])}"'
                 if server_mode else '')
 
     locbtn = ('<button class="locbtn" onclick="doLocate(this)">Im Altium finden</button>'
@@ -965,8 +967,9 @@ def _script(server_mode):
       btn.classList.add('locate-on');
       var x = parseFloat(err.getAttribute('data-locate-x'));
       var y = parseFloat(err.getAttribute('data-locate-y'));
+      var track = err.getAttribute('data-locate-track');
       fetch('/locate', {method:'POST', headers:{'Content-Type':'application/json'},
-                        body: JSON.stringify({x:x, y:y})}).catch(function(){});
+                        body: JSON.stringify({x:x, y:y, track:track})}).catch(function(){});
     }
     var pageGen = null;
     function pollStatus(){

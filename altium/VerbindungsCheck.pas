@@ -304,8 +304,9 @@ end;
 
 
 {------------------------------------------------------------------------------}
-{ Sprung-Wunsch aus bridge_jump.txt ("x_mm;y_mm") -> im PCB dorthin zoomen.      }
-{ Rueckgabe: True, wenn ein Sprung ausgefuehrt wurde (dann Fenster ZU lassen).   }
+{ Sprung-Wunsch aus bridge_jump.txt ("x_mm;y_mm;track_id") -> im PCB dorthin     }
+{ zoomen UND den Layer des Tracks aktiv setzen (sonst springt man auf dem        }
+{ gerade aktiven Layer). Rueckgabe: True, wenn gesprungen wurde.                 }
 {------------------------------------------------------------------------------}
 function DoJump(Dummy : Integer) : Boolean;
 var
@@ -313,6 +314,7 @@ var
   line : String;
   xmm, ymm : Double;
   cx, cy, r : TCoord;
+  tid : Integer;
 begin
   Result := False;
   if (Board = nil) or (JumpPath = '') then Exit;
@@ -340,6 +342,13 @@ begin
     cy  := Board.YOrigin + MMsToCoord(ymm);
     r   := MMsToCoord(2.0);   // ~4x4 mm Ausschnitt um den Punkt
     try
+      // Layer des zugehoerigen Tracks aktiv setzen (falls Track-ID mitkam).
+      if parts.Count >= 3 then
+      begin
+        tid := StrToIntDef(parts[2], -1);
+        if (tid >= 0) and (tid < TrackCount) and (TrackArr[tid] <> nil) then
+          Board.CurrentLayer := TrackArr[tid].Layer;
+      end;
       Board.GraphicalView_ZoomOnRect(cx - r, cy - r, cx + r, cy + r);
       Board.GraphicalView_ZoomRedraw;
       Result := True;
