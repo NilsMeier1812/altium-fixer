@@ -19,26 +19,29 @@ Der Fehlerbericht schlägt pro Fehler automatisch einen Fix vor:
 Der Zielpunkt ist in der Zoom-Grafik **grün markiert** (mit Pfeilen von den
 alten Punkten), bevor man klickt.
 
-**Was exportiert wird:** alle Layer, aber **nur Tracks mit Net**. Tracks ohne
-Net sind vor allem die Füllprimitive von Kupferflächen/Polygonen – sie tragen
-kein Net, machen aber oft den Großteil der Objekte aus (z. B. 300k+). Die
-Analyse braucht das Net ohnehin (gruppiert nach Layer + Net), also fliegen sie
-raus. Das reduziert die Datenmenge drastisch und stellt sicher, dass jeder
-exportierte Track ein Net hat. Zum Prüfen der Net-Situation gibt es
-`DiagTests.VC_T8_NetCheck`.
+**Was exportiert wird:** alle Innenlagen, aber **nur Tracks mit Net** und **ohne
+TOP/BOTTOM**. TOP und BOTTOM sollen nie ausgewertet werden und werden schon beim
+Export übersprungen (spart die meiste Arbeit). Tracks ohne Net sind vor allem die
+Füllprimitive von Kupferflächen/Polygonen – sie tragen kein Net, machen aber oft
+den Großteil der Objekte aus (z. B. 300k+). Die Analyse braucht das Net ohnehin
+(gruppiert nach Layer + Net), also fliegen sie raus. Das reduziert die Datenmenge
+drastisch und stellt sicher, dass jeder exportierte Track ein Net hat. Zum Prüfen
+der Net-Situation gibt es `DiagTests.VC_T8_NetCheck`.
 
 **Layer im Report filtern:** Oben im Report gibt es eine **Layer-Filterleiste**
 (Checkbox je Layer mit Fehleranzahl, plus „alle"/„keine") – damit blendet man
 Layer live ein/aus, ohne neu zu exportieren. Der „offen"-Zähler zählt nur die
-eingeblendeten Layer. (Einen Layer schon beim Export weglassen: in
-`RunVerbindungsCheck` in der Track-Schleife eine Bedingung wie
-`if Trk.Layer = eTopLayer then ... else` ergänzen.)
+eingeblendeten Layer. (Weitere Layer schon beim Export weglassen: in
+`RunVerbindungsCheck` in der Track-Schleife die `eTopLayer`/`eBottomLayer`-Bedingung
+um weitere Layer ergänzen.)
 
 > **Große Boards:** Altium-Skripte iterieren einzeln über jedes Objekt – das ist
-> langsam. Während `RunVerbindungsCheck` läuft, ist Altium **einige Sekunden bis
-> ~1–2 Minuten nicht bedienbar** (ein Hinweis-Dialog kündigt das an). Das ist
-> normal, bitte **nicht abbrechen**. Eine Not-Bremse (`MAX_ITER`) verhindert ein
-> Endlos-Hängen.
+> langsam und kann bei sehr großen Boards **mehrere Minuten** dauern. Während
+> `RunVerbindungsCheck` läuft, zeigt ein **Fortschrittsfenster** einen mitlaufenden
+> Zähler (geprüfte Objekte / exportierte Tracks / übersprungene TOP-BOTTOM), damit
+> man sieht, dass es noch arbeitet. Bitte **nicht abbrechen**. Eine Not-Bremse
+> (`MAX_ITER`) verhindert ein Endlos-Hängen. TOP/BOTTOM werden gar nicht erst
+> exportiert – das spart bei mehrlagigen Boards den Großteil der Arbeit.
 
 ---
 
@@ -136,9 +139,9 @@ Liegt das Repo woanders, den Pfad in `VCWorkDir` anpassen. Dorthin schreibt das 
 1. Das gewünschte **`.PcbDoc` öffnen** und das **PCB-Fenster in den Vordergrund**
    holen (aktives Dokument – sonst ist der PCB-Server nicht bereit).
 2. **`RunVerbindungsCheck`** ausführen (kein Ordner-Dialog – Pfad ist fest).
-   - Liest die Tracks (**alle Layer, nur mit Net**) und schreibt `tracks.json`.
-     Ein Hinweis-Dialog kündigt die Wartezeit an; bei großen Boards dauert der
-     Export einige Minuten (Altium ist solange blockiert – normal).
+   - Liest die Tracks (**ohne TOP/BOTTOM, nur mit Net**) und schreibt
+     `tracks.json`. Ein **Fortschrittsfenster** mit mitlaufendem Zähler zeigt,
+     dass es arbeitet; bei großen Boards dauert der Export einige Minuten.
    - Der Hintergrund-Watcher merkt das in ~1 s und **öffnet den Browser
      automatisch**. (Ohne Watcher: einmal `start_server.bat` doppelklicken.)
    - Danach geht in Altium ein **Fenster** auf. Altium ist ab jetzt blockiert –

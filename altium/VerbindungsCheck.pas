@@ -19,7 +19,8 @@
 {  im Speicher (aus dem Export), daher ist das Holen sofort da - ohne erneute   }
 {  Iteration ueber das (grosse) Board.                                          }
 {                                                                              }
-{  Nur Tracks MIT Net werden exportiert/behandelt (ohne Net = Flaechenfuellung).}
+{  Nur Tracks MIT Net und OHNE TOP/BOTTOM werden exportiert/behandelt           }
+{  (ohne Net = Flaechenfuellung; TOP/BOTTOM sollen nie gezeigt werden).         }
 {  Zahlen locale-unabhaengig. Board <-> Bridge laeuft ueber Dateien (kein OLE). }
 {..............................................................................}
 
@@ -294,7 +295,7 @@ var
   x1, y1, x2, y2, wd : Double;
   ox, oy : TCoord;
   first, runaway : Boolean;
-  id, netless, iterated : Integer;
+  id, netless, skippedLayer, iterated : Integer;
 begin
   Board := GetBoard;
   if Board = nil then Exit;
@@ -308,9 +309,17 @@ begin
   if FileExists(CmdPath) then DeleteFile(CmdPath);
   if FileExists(AckPath) then DeleteFile(AckPath);
 
-  ShowMessage('Lese jetzt die Tracks (nur Tracks mit Net; alle Layer).' +
-    #13#10#13#10 + 'Bei grossen Boards kann das einige Minuten dauern - Altium ' +
-    'reagiert solange NICHT. Das ist normal, bitte NICHT abbrechen.');
+  // Fortschrittsfenster MODELESS zeigen (Buttons aus), damit man waehrend des
+  // langen Exports sieht, dass es laeuft. Application.ProcessMessages haelt das
+  // Fenster am Leben. Vor der Apply-Schleife wird es kurz versteckt und dann
+  // modal wieder gezeigt.
+  VCForm.ButtonPull.Enabled  := False;
+  VCForm.ButtonClose.Enabled := False;
+  VCForm.LabelStatus.Caption :=
+    'Lese Tracks ... (TOP/BOTTOM werden uebersprungen, nur Tracks mit Net).' +
+    #13#10#13#10 + 'Das kann bei grossen Boards einige Minuten dauern. ' +
+    'Bitte NICHT abbrechen - der Zaehler unten laeuft weiter.';
+  try VCForm.Show; Application.ProcessMessages; except end;
 
   sep := DecSep;
   ox  := Board.XOrigin;
@@ -331,18 +340,36 @@ begin
   Iter.AddFilter_LayerSet(AllLayers);
   Iter.AddFilter_Method(eProcessAll);
 
-  first    := True;
-  id       := 0;
-  netless  := 0;
-  iterated := 0;
-  runaway  := False;
+  first        := True;
+  id           := 0;
+  netless      := 0;
+  skippedLayer := 0;
+  iterated     := 0;
+  runaway      := False;
   Trk := Iter.FirstPCBObject;
   while Trk <> nil do
   begin
     iterated := iterated + 1;
     if iterated > MAX_ITER then begin runaway := True; Break; end;
 
-    if Trk.Net = nil then
+    // Statusanzeige gelegentlich aktualisieren (nicht jeden Durchlauf).
+    if (iterated mod 5000) = 0 then
+    begin
+      VCForm.LabelStatus.Caption :=
+        'Lese Tracks ... bitte warten.' + #13#10#13#10 +
+        'Geprueft: ' + IntToStr(iterated) + #13#10 +
+        'Exportiert (mit Net, ohne TOP/BOTTOM): ' + IntToStr(id) + #13#10 +
+        'TOP/BOTTOM uebersprungen: ' + IntToStr(skippedLayer);
+      try Application.ProcessMessages; except end;
+    end;
+
+    // TOP und BOTTOM werden nie gezeigt -> frueh ueberspringen, spart die
+    // teure Net-/String-/Add-Arbeit fuer den Grossteil der Tracks.
+    if (Trk.Layer = eTopLayer) or (Trk.Layer = eBottomLayer) then
+    begin
+      skippedLayer := skippedLayer + 1;
+    end
+    else if Trk.Net = nil then
     begin
       netless := netless + 1;
     end
@@ -381,6 +408,7 @@ begin
   if runaway then
   begin
     sl.Free;
+    try VCForm.Hide; except end;
     ShowMessage('Abgebrochen: mehr als ' + IntToStr(MAX_ITER) + ' Objekte ' +
       'durchlaufen, ohne ein Ende zu erreichen. Bitte melden.');
     Exit;
@@ -393,16 +421,24 @@ begin
   if FileExists(JsonPath) then DeleteFile(JsonPath);
   RenameFile(JsonPath + '.tmp', JsonPath);
 
+  // Fortschrittsfenster verstecken und Buttons wieder aktivieren, damit es
+  // gleich sauber modal (mit klickbaren Buttons) geoeffnet werden kann.
+  VCForm.ButtonPull.Enabled  := True;
+  VCForm.ButtonClose.Enabled := True;
+  try VCForm.Hide; except end;
+
   if id <= 0 then
   begin
     ShowMessage('Keine Tracks mit Net exportiert (ohne Net: ' + IntToStr(netless) +
+      ', TOP/BOTTOM uebersprungen: ' + IntToStr(skippedLayer) +
       '). Fehlt dem Board die Konnektivitaet? Bitte VC_T8_NetCheck ausfuehren.');
     Exit;
   end;
 
   VCForm.LabelStatus.Caption :=
-    'Export fertig: ' + IntToStr(id) + ' Tracks mit Net ' +
-    '(ohne Net: ' + IntToStr(netless) + ').' + #13#10#13#10 +
+    'Export fertig: ' + IntToStr(id) + ' Tracks (mit Net, ohne TOP/BOTTOM). ' +
+    'Uebersprungen: TOP/BOTTOM ' + IntToStr(skippedLayer) +
+    ', ohne Net ' + IntToStr(netless) + '.' + #13#10#13#10 +
     'Der Browser-Report sollte offen sein (sonst start_watcher.bat starten). ' +
     'Jetzt die Fehler im Browser anklicken, dann hier "Aenderungen uebernehmen".';
 
@@ -492,7 +528,11 @@ begin
   begin
     iterated := iterated + 1;
     if iterated > MAX_ITER then begin runaway := True; Break; end;
-    if Trk.Net <> nil then TrackList.Add(Trk);
+    // Gleicher Filter wie beim Export: TOP/BOTTOM raus, nur Tracks mit Net,
+    // sonst passen die IDs nicht zu den im Browser gewaehlten Fixes.
+    if (Trk.Layer <> eTopLayer) and (Trk.Layer <> eBottomLayer) and
+       (Trk.Net <> nil) then
+      TrackList.Add(Trk);
     if TrackList.Count > maxTid then Break;
     Trk := Iter.NextPCBObject;
   end;
