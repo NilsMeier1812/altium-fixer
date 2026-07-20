@@ -64,9 +64,17 @@ var
 
 
 {------------------------------------------------------------------------------}
+{ HINWEIS zu den Dummy-Parametern (Dummy : Integer):                            }
+{ Altiums "Run Script"-Dialog listet ALLE parameterlosen procedures UND         }
+{ functions. Damit dort nur die zwei Einstiegspunkte RunVerbindungsCheck und    }
+{ ApplyFixes erscheinen, bekommt jeder interne Helfer einen (ungenutzten)        }
+{ Parameter - dann blendet Altium ihn aus. Aufruf also z.B. DecSep(0).          }
+{------------------------------------------------------------------------------}
+
+{------------------------------------------------------------------------------}
 { Locale-unabhaengige Zahl <-> String                                          }
 {------------------------------------------------------------------------------}
-function DecSep : String;
+function DecSep(Dummy : Integer) : String;
 var probe : String;
 begin
   probe := FloatToStr(1.5);
@@ -89,7 +97,7 @@ end;
 function DotStrToFloat(const s : String) : Double;
 var sep, c, t : String; i : Integer;
 begin
-  sep := DecSep;
+  sep := DecSep(0);
   t := '';
   for i := 1 to Length(s) do
   begin
@@ -135,15 +143,15 @@ end;
 {------------------------------------------------------------------------------}
 { Fester Arbeitsordner (Funktion, nicht const -> sonst "OleStr into Double")    }
 {------------------------------------------------------------------------------}
-function VCWorkDir : String;
+function VCWorkDir(Dummy : Integer) : String;
 begin
   Result := 'C:\altium-track-fixer';
 end;
 
-function CheckWorkDir : Boolean;
+function CheckWorkDir(Dummy : Integer) : Boolean;
 var d : String;
 begin
-  d := VCWorkDir;
+  d := VCWorkDir(0);
   Result := FileExists(d + '\check_server.py');
   if not Result then
     ShowMessage('check_server.py nicht gefunden unter:' + #13#10 +
@@ -155,7 +163,7 @@ end;
 {------------------------------------------------------------------------------}
 { Board defensiv holen                                                         }
 {------------------------------------------------------------------------------}
-function GetBoard : IPCB_Board;
+function GetBoard(Dummy : Integer) : IPCB_Board;
 begin
   Result := nil;
   if PCBServer = nil then
@@ -180,7 +188,7 @@ end;
 { Der Server schreibt nur noch offene Fixes in bridge_cmd.txt, also werden hier  }
 { genau die neuen angewendet. Rueckgabe: Anzahl angepasster Endpunkte.          }
 {------------------------------------------------------------------------------}
-function DoApply : Integer;
+function DoApply(Dummy : Integer) : Integer;
 var
   cmd, parts, results : TStringList;
   i, tid, endNo, applied : Integer;
@@ -277,7 +285,7 @@ end;
 { Sprung-Wunsch aus bridge_jump.txt ("x_mm;y_mm") -> im PCB dorthin zoomen.      }
 { Rueckgabe: True, wenn ein Sprung ausgefuehrt wurde (dann Fenster ZU lassen).   }
 {------------------------------------------------------------------------------}
-function DoJump : Boolean;
+function DoJump(Dummy : Integer) : Boolean;
 var
   jl, parts : TStringList;
   line : String;
@@ -366,8 +374,8 @@ begin
     begin
       if (PCBServer <> nil) and (PCBServer.GetCurrentPCBBoard = Board) then
       begin
-        n := DoApply;
-        if DoJump then
+        n := DoApply(0);
+        if DoJump(0) then
           // Sprung angefordert: Fixes sind drin, Ansicht ist am Punkt ->
           // Fenster NICHT wieder oeffnen. (Zurueck ins Menue: ApplyFixes.)
           ApplyRequested := False
@@ -400,11 +408,11 @@ var
   first, runaway : Boolean;
   id, netless, skippedLayer, iterated : Integer;
 begin
-  Board := GetBoard;
+  Board := GetBoard(0);
   if Board = nil then Exit;
 
-  if not CheckWorkDir then Exit;
-  WorkDir  := VCWorkDir;
+  if not CheckWorkDir(0) then Exit;
+  WorkDir  := VCWorkDir(0);
   JsonPath := WorkDir + '\tracks.json';
   CmdPath  := WorkDir + '\bridge_cmd.txt';
   AckPath  := WorkDir + '\bridge_ack.txt';
@@ -426,7 +434,7 @@ begin
     'Bitte NICHT abbrechen - der Zaehler unten laeuft weiter.';
   try VCForm.Show; Application.ProcessMessages; except end;
 
-  sep := DecSep;
+  sep := DecSep(0);
   ox  := Board.XOrigin;
   oy  := Board.YOrigin;
 
@@ -558,7 +566,7 @@ end;
 { nicht nur bis zur hoechsten ID - man kann im Browser ja neue Fehler anklicken. }
 { Rueckgabe: True bei Erfolg.                                                   }
 {------------------------------------------------------------------------------}
-function RebuildTrackList : Boolean;
+function RebuildTrackList(Dummy : Integer) : Boolean;
 var
   Iter : IPCB_BoardIterator;
   Trk  : IPCB_Track;
@@ -628,17 +636,17 @@ end;
 {------------------------------------------------------------------------------}
 procedure ApplyFixes;
 begin
-  Board := GetBoard;
+  Board := GetBoard(0);
   if Board = nil then Exit;
-  if not CheckWorkDir then Exit;
-  WorkDir  := VCWorkDir;
+  if not CheckWorkDir(0) then Exit;
+  WorkDir  := VCWorkDir(0);
   JsonPath := WorkDir + '\tracks.json';
   CmdPath  := WorkDir + '\bridge_cmd.txt';
   AckPath  := WorkDir + '\bridge_ack.txt';
   JumpPath := WorkDir + '\bridge_jump.txt';
 
   if (TrackList = nil) or (TrackList.Count = 0) or (BuiltForBoard <> Board) then
-    if not RebuildTrackList then Exit;
+    if not RebuildTrackList(0) then Exit;
 
   RunApplyLoop(
     'Menue erneut geoeffnet (kein neuer Export). Im Browser die Fehler ' +
