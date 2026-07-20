@@ -345,16 +345,20 @@ end;
 {------------------------------------------------------------------------------}
 { Gemeinsame Menue-Schleife: "Uebernehmen" schliesst das Fenster, wendet die    }
 { offenen Fixes an (Fenster kurz zu -> Board wird sichtbar aktualisiert) und     }
-{ oeffnet es wieder. "Fertig" beendet. Die Startmeldung setzt der Aufrufer.      }
+{ oeffnet es wieder. "Fertig" beendet. startMsg = erste Statuszeile.            }
+{ (Parameter absichtlich: so listet Altium diese Hilfsprozedur NICHT im         }
+{ "Run Script"-Dialog - dort sollen nur RunVerbindungsCheck und ApplyFixes      }
+{ auftauchen.)                                                                  }
 {                                                                              }
 { Sonderfall "Im Altium finden": Hat man im Browser einen Punkt zum Anzeigen    }
 { gewaehlt, liegt beim Uebernehmen bridge_jump.txt vor. Dann werden die Fixes    }
 { angewendet, es wird zum Punkt gezoomt und das Fenster bleibt ZU (sonst        }
 { blockiert das modale Fenster die Sicht). Menue holt man mit ApplyFixes zurueck.}
 {------------------------------------------------------------------------------}
-procedure RunApplyLoop;
+procedure RunApplyLoop(const startMsg : String);
 var n : Integer;
 begin
+  VCForm.LabelStatus.Caption := startMsg;
   repeat
     ApplyRequested := False;
     VCForm.ShowModal;
@@ -538,14 +542,12 @@ begin
 
   BuiltForBoard := Board;   // TrackList gehoert zu diesem Board (fuer ApplyFixes)
 
-  VCForm.LabelStatus.Caption :=
+  RunApplyLoop(
     'Export fertig: ' + IntToStr(id) + ' Tracks (mit Net, ohne TOP/BOTTOM). ' +
     'Uebersprungen: TOP/BOTTOM ' + IntToStr(skippedLayer) +
     ', ohne Net ' + IntToStr(netless) + '.' + #13#10#13#10 +
     'Der Browser-Report sollte offen sein (sonst start_watcher.bat starten). ' +
-    'Jetzt die Fehler im Browser anklicken, dann hier "Aenderungen uebernehmen".';
-
-  RunApplyLoop;
+    'Jetzt die Fehler im Browser anklicken, dann hier "Aenderungen uebernehmen".');
 end;
 
 
@@ -638,11 +640,9 @@ begin
   if (TrackList = nil) or (TrackList.Count = 0) or (BuiltForBoard <> Board) then
     if not RebuildTrackList then Exit;
 
-  VCForm.LabelStatus.Caption :=
+  RunApplyLoop(
     'Menue erneut geoeffnet (kein neuer Export). Im Browser die Fehler ' +
-    'anklicken, dann "Aenderungen uebernehmen" - oder "Fertig".';
-
-  RunApplyLoop;
+    'anklicken, dann "Aenderungen uebernehmen" - oder "Fertig".');
 end;
 
 end.

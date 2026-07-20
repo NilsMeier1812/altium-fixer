@@ -125,6 +125,15 @@ schreibt.
 > übernehmen" / „Fertig") und `ApplyFixes` (öffnet **dasselbe Menü erneut**,
 > falls man es geschlossen hat – **ohne** neuen Export). Mehr wird nicht
 > gebraucht. (Diagnose-Skripte für den Notfall liegen in `altium\diagnose\`.)
+>
+> Der „Run Script"-Dialog zeigt **alle parameterlosen `procedure`s** der geladenen
+> Dateien – deshalb erscheinen hier genau diese zwei (Hilfsfunktionen haben
+> Rückgabewerte/Parameter und werden nicht gelistet). **Siehst du noch mehr (z. B.
+> `VC_T1..VC_T8`), ist noch die alte `DiagTests.pas` geladen:** das Skriptprojekt
+> in Altium schließen (Projects-Panel → Rechtsklick → *Close Project*) bzw. offene
+> `DiagTests.pas` schließen, dann `VerbindungsCheck.PrjScr` neu öffnen. Nach einem
+> `git pull` liegt DiagTests.pas ohnehin nur noch unter `altium\diagnose\` und ist
+> nicht mehr Teil des Projekts.
 
 Der Arbeitsordner ist **fest auf `C:\altium-track-fixer`** verdrahtet (Funktion
 `VCWorkDir` oben in `VerbindungsCheck.pas`) – das Skript fragt nichts mehr ab.
