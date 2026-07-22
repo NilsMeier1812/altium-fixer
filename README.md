@@ -20,20 +20,27 @@ Der Zielpunkt ist in der Zoom-Grafik **grün markiert** (mit Pfeilen von den
 alten Punkten), bevor man klickt.
 
 **Was exportiert wird:** alle Innenlagen, aber **nur Tracks mit Net** und **ohne
-TOP/BOTTOM**. TOP und BOTTOM sollen nie ausgewertet werden und werden schon beim
-Export übersprungen (spart die meiste Arbeit). Tracks ohne Net sind vor allem die
+TOP/BOTTOM**. TOP und BOTTOM sollen nie ausgewertet werden und werden **schon am
+Board-Iterator ausgeschlossen** (`AddFilter_LayerSet(AllLayers - {eTopLayer,
+eBottomLayer})`) – der Iterator liefert diese Layer also gar nicht erst, statt sie
+pro Track zu prüfen. Ein zusätzlicher Check in der Schleife bleibt als
+Sicherheitsnetz. Tracks ohne Net sind vor allem die
 Füllprimitive von Kupferflächen/Polygonen – sie tragen kein Net, machen aber oft
 den Großteil der Objekte aus (z. B. 300k+). Die Analyse braucht das Net ohnehin
 (gruppiert nach Layer + Net), also fliegen sie raus. Das reduziert die Datenmenge
 drastisch und stellt sicher, dass jeder exportierte Track ein Net hat. Zum Prüfen
 der Net-Situation gibt es `VC_T8_NetCheck` in `altium\diagnose\DiagTests.pas`.
 
-**Layer im Report filtern:** Oben im Report gibt es eine **Layer-Filterleiste**
-(Checkbox je Layer mit Fehleranzahl, plus „alle"/„keine") – damit blendet man
-Layer live ein/aus, ohne neu zu exportieren. Der „offen"-Zähler zählt nur die
-eingeblendeten Layer. (Weitere Layer schon beim Export weglassen: in
-`RunVerbindungsCheck` in der Track-Schleife die `eTopLayer`/`eBottomLayer`-Bedingung
-um weitere Layer ergänzen.)
+**Layer im Report filtern und sortieren:** Oben im Report gibt es eine
+**Layer-Filterleiste** (Checkbox je Layer mit Fehleranzahl, plus „alle"/„keine") –
+damit blendet man Layer live ein/aus, ohne neu zu exportieren. Der „offen"-Zähler
+zählt nur die eingeblendeten Layer. In der **Sortierleiste** gibt es zusätzlich
+den Button **„Layer (gruppiert)"**: er sortiert alle Fehler nach Layer-Namen
+(natürliche Reihenfolge, also *Mid-Layer 2* vor *Mid-Layer 10*) und innerhalb
+eines Layers weiter nach Abstand. Jeder Fehlerblock trägt außerdem ein
+**Layer-Tag**, damit die Gruppierung sofort sichtbar ist. (Weitere Layer schon
+beim Export weglassen: in `RunVerbindungsCheck` die Layer-Menge am Iterator
+`AllLayers - MkSet(eTopLayer, eBottomLayer)` um weitere Layer erweitern.)
 
 > **Große Boards:** Altium-Skripte iterieren einzeln über jedes Objekt – das ist
 > langsam und kann bei sehr großen Boards **mehrere Minuten** dauern. Während
@@ -100,6 +107,14 @@ Damit du im Alltag **ausschließlich in Altium klicken** musst, startet der
 Server **einmal beim Windows-Login** und läuft dann im Hintergrund. Er wartet
 auf `tracks.json` und öffnet den Report **von selbst**, sobald Altium sie
 schreibt.
+
+> **Kein alter Report beim Hochfahren:** Eine `tracks.json`, die beim Serverstart
+> schon daliegt (vom Vortag), gilt als **bereits gesehen** und wird **nicht mehr
+> automatisch geöffnet**. Der Browser geht erst dann von selbst auf, wenn du in
+> dieser Sitzung einen **neuen** Export aus Altium fährst. So kommt beim
+> Hochfahren nicht mehr ungefragt der Bericht vom letzten Mal hoch. Der letzte
+> Report bleibt trotzdem unter der Server-Adresse erreichbar, falls du dort
+> weiterarbeiten willst (`ApplyFixes`).
 
 1. **Win+R** → `shell:startup` → Enter (öffnet den Autostart-Ordner).
 2. **`start_watcher_hidden.vbs`** (oder eine Verknüpfung darauf) dort hineinlegen.
@@ -169,9 +184,10 @@ Liegt das Repo woanders, den Pfad in `VCWorkDir` anpassen. Dorthin schreibt das 
      wieder „Änderungen übernehmen" → usw. – **ohne** erneuten (langen) Export.
 5. **„Fertig"** beendet die Schleife und schließt das Fenster. Willst du das
    Menü später wieder öffnen, **`ApplyFixes`** ausführen – es zeigt exakt dasselbe
-   Fenster mit „Änderungen übernehmen" / „Fertig", **ohne** neuen Export. Liegt
-   die Zuordnung aus dem letzten Export noch im Speicher, ist das sofort da;
-   sonst wird sie einmal neu aufgebaut (Board-Iteration, mit Fortschrittsfenster).
+   Fenster mit „Änderungen übernehmen" / „Fertig", **ohne** neuen Export und
+   **ohne** erneutes Einlesen. Das Fenster ist **sofort** da – auch nach einem
+   **Altium-Neustart** (früher wurde hier minutenlang das ganze Board neu
+   iteriert). Wie das geht, steht unten unter „Track-Identität".
 
 **„Im Altium finden"** (eine Stelle im Board anschauen): Bei jedem Fehlerblock
 gibt es den Button **„Im Altium finden"**. Es lässt sich immer **nur einer**
@@ -265,17 +281,35 @@ Server   --schreibt---> bridge_cmd.txt  --liest-->  Altium   (offene Fixes, beim
 Altium   --schreibt---> bridge_ack.txt  --liest-->  Server   (erledigt: fix_id;1)
 ```
 
+Eine Zeile in `bridge_cmd.txt` je Endpunkt:
+`fix_id;track_id;end;ziel_x;ziel_y;orig_x;orig_y;layer`. Die letzten drei Felder
+(**Ursprungslage** des Endpunkts + **Layername**) sind neu und ermöglichen die
+räumliche Track-Suche unten. Ältere Felder bleiben vorne unverändert, das Format
+ist also rückwärtskompatibel.
+
 Grund für die Datei-Bridge: Das Altium-DelphiScript kennt hier kein
 `CreateOleObject` (kein HTTP/OLE aus Altium). Datei-I/O geht dagegen zuverlässig.
 
-Track-Identität: `RunVerbindungsCheck` vergibt die ID als **Iterations-Index**
-über die Tracks mit Net (ohne TOP/BOTTOM) und hält die Referenzen **im Speicher**
-– das „Übernehmen" nutzt sie direkt (keine erneute Iteration). `ApplyFixes`
-verwendet dieselbe Zuordnung wieder, solange sie im Speicher liegt und zum
-aktuellen Board gehört; sonst iteriert es das Board in **derselben Reihenfolge
-und mit demselben Filter** erneut und rekonstruiert sie. Wichtig: das **gleiche
-PcbDoc** muss aktiv sein und sollte zwischen Export und Anwenden nicht strukturell
-verändert werden (Tracks hinzufügen/löschen verschiebt die IDs).
+Track-Identität & Anwenden ohne Neu-Einlesen: `RunVerbindungsCheck` vergibt die ID
+als **Iterations-Index** über die Tracks mit Net (ohne TOP/BOTTOM) und hält die
+Referenzen **im Speicher** – das „Übernehmen" nutzt sie direkt als schnelle
+Abkürzung (keine erneute Iteration). Ist diese Zuordnung **weg** (z. B. nach einem
+**Altium-Neustart**, wenn du am nächsten Tag mit `ApplyFixes` weitermachst), wird
+das Board **nicht mehr komplett neu iteriert**. Stattdessen findet Altium jeden zu
+fixenden Track über einen **kleinen räumlichen Iterator** (`SpatialIterator_Create`
++ `AddFilter_Area`) an seiner **Ursprungslage** wieder – ein Suchfenster von rund
+0,1 mm um den Endpunkt, plus Abgleich des Layer-Namens. Weil Fehlerstellen
+**partnerlos** sind (kein zweiter Endpunkt an exakt derselben Stelle), ist der
+Treffer eindeutig; bei 0 oder mehr als 1 Treffer wird **nichts** bewegt (lieber
+einen Fix auslassen als den falschen Track verschieben). So ist `ApplyFixes`
+**sofort** da statt nach Minuten. Wichtig bleibt: das **gleiche PcbDoc** muss aktiv
+sein und sollte zwischen Export und Anwenden nicht strukturell verändert werden.
+
+> **Fallback:** Sollte die räumliche Suche auf einer bestimmten Altium-Version
+> einmal nicht greifen, hilft im Zweifel ein frischer `RunVerbindungsCheck`
+> (voller Export) – das entspricht dem alten Verhalten. Die frühere Funktion
+> `RebuildTrackList` (komplettes Neu-Iterieren) liegt als Notnagel weiterhin im
+> Skript, wird aber nicht mehr automatisch aufgerufen.
 
 ---
 

@@ -27,7 +27,11 @@ Protokoll (bewusst primitiv, damit DelphiScript kein JSON parsen muss):
   GET  /status               -> JSON {states:{fix_id:state}, stale:[...], gen:N}
   POST /fix   {fix_id:"..."} -> Fix in die Queue legen
   POST /locate {x,y}|{clear} -> Sprung-Ziel setzen/loeschen (nur EIN Punkt)
-  bridge_cmd.txt  (Datei)    -> offene Fixes "fix_id;track;end;x;y"
+  bridge_cmd.txt  (Datei)    -> offene Fixes
+                                "fix_id;track;end;ziel_x;ziel_y;orig_x;orig_y;layer"
+                                (orig_x/y + layer = Ursprungslage fuer die
+                                 raeumliche Track-Suche in Altium; ohne die im
+                                 Speicher liegende Zuordnung wiederfindbar)
   bridge_ack.txt  (Datei)    -> Bestaetigungen "fix_id;1"
   bridge_jump.txt (Datei)    -> Sprung-Ziel "x_mm;y_mm;track_id" (Altium zoomt
                                 hin + waehlt den Layer des Tracks)
@@ -53,12 +57,31 @@ from verbindungs_check.core import analyze_tracks, build_html  # noqa: E402
 DEFAULT_DIR = r"C:\altium-track-fixer"
 
 
+def _bridge_line(fid, move):
+    """
+    Eine Bridge-Zeile fuer Altium: fix_id;track_id;end;tx;ty;ox;oy;layer
+
+    Die letzten drei Felder (ox/oy = urspruengliche Lage des Endpunkts,
+    layer = Layername) erlauben Altium, den Track OHNE die im Speicher liegende
+    Zuordnung ueber eine kleine raeumliche Suche wiederzufinden - so muss beim
+    erneuten Oeffnen (ApplyFixes) nicht mehr das ganze Board neu iteriert werden.
+    Aeltere Felder bleiben vorne unveraendert (rueckwaertskompatibel).
+    """
+    tid, end, tx, ty = move[0], move[1], move[2], move[3]
+    ox = move[4] if len(move) > 4 else 0.0
+    oy = move[5] if len(move) > 5 else 0.0
+    layer = str(move[6]) if len(move) > 6 else ""
+    # Layername darf die Trennzeichen der Bridge nicht enthalten.
+    layer = layer.replace(";", " ").replace("\n", " ").replace("\r", " ")
+    return f"{fid};{tid};{end};{tx:.6f};{ty:.6f};{ox:.6f};{oy:.6f};{layer}"
+
+
 class FixRegistry:
     """Haelt Fix-Kommandos, Zustaende und die Queue - threadsicher."""
 
     def __init__(self, real_errors, overlaps):
         self.lock = threading.Lock()
-        # fix_id -> moves [(track_id, end, tx, ty), ...]
+        # fix_id -> moves [(track_id, end, tx, ty, ox, oy, layer), ...]
         self.moves = {}
         # fix_id -> set of track_ids (fuer Stale-Erkennung)
         self.tracks_of = {}
@@ -91,8 +114,8 @@ class FixRegistry:
         with self.lock:
             for fid, st in list(self.state.items()):
                 if st == "queued":
-                    for (tid, end, tx, ty) in self.moves[fid]:
-                        out.append(f"{fid};{tid};{end};{tx:.6f};{ty:.6f}")
+                    for move in self.moves[fid]:
+                        out.append(_bridge_line(fid, move))
                     self.state[fid] = "pending"
         return "\n".join(out)
 
@@ -109,8 +132,8 @@ class FixRegistry:
                     continue
                 if st == "queued":
                     self.state[fid] = "sent"
-                for (tid, end, tx, ty) in self.moves[fid]:
-                    out.append(f"{fid};{tid};{end};{tx:.6f};{ty:.6f}")
+                for move in self.moves[fid]:
+                    out.append(_bridge_line(fid, move))
         return "\n".join(out)
 
     def ack(self, fid, ok):
@@ -418,8 +441,17 @@ def watch_loop(state, json_path, cmd_path, ack_path, jump_path, url,
     Ueberwacht json_path. Bei einer neuen/geaenderten (und fertig geschriebenen)
     tracks.json wird der Report neu gebaut, die Bridge zurueckgesetzt und der
     Browser geoeffnet. So genuegt im Alltag ein Klick in Altium.
+
+    Wichtig (Autostart): Eine schon beim Start vorhandene tracks.json (vom
+    Vortag) gilt als BEREITS GESEHEN - sie wird NICHT automatisch geoeffnet.
+    Nur ein NEUER Export nach dem Serverstart oeffnet den Browser. Sonst kaeme
+    beim Hochfahren jedes Mal ungefragt der alte Report hoch.
     """
-    last_sig = None
+    last_sig = _stable_stat(json_path)  # Vorhandene Datei = schon gesehen
+    if last_sig is not None:
+        print("Alte tracks.json gefunden - wird NICHT automatisch geoeffnet. "
+              "Der Report erscheint erst nach einem neuen Export aus Altium "
+              "(oder manuell unter der oben genannten Server-Adresse).")
     while not stop_event.is_set():
         sig = _stable_stat(json_path)
         if sig is not None and sig != last_sig:

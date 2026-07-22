@@ -13,7 +13,8 @@
 {       angeklickten Fixes werden EINMALIG angewendet. Das Fenster bleibt offen,}
 {       man kann im Browser weiter anklicken und erneut holen.                 }
 {    5. "Fertig" beendet. Will man das Menue spaeter wieder oeffnen (ohne neuen  }
-{       Export): ApplyFixes ausfuehren - es zeigt genau dasselbe Fenster.        }
+{       Export): ApplyFixes ausfuehren - es zeigt genau dasselbe Fenster und ist  }
+{       SOFORT da, auch nach einem Altium-Neustart (kein Neu-Einlesen mehr).      }
 {                                                                              }
 {  "Im Altium finden": Waehlt man im Browser bei EINEM Fehler "Im Altium finden",}
 {  wird beim naechsten "Uebernehmen" dorthin gezoomt und das Fenster bleibt ZU   }
@@ -22,9 +23,11 @@
 {  In der normalen Benutzung braucht man nur diese zwei Skripte:                 }
 {    RunVerbindungsCheck (Export + Menue)  und  ApplyFixes (Menue erneut).       }
 {                                                                              }
-{  Kein Timer/Polling noetig: ein Klick holt genau einmal. Die Track-Liste liegt}
-{  im Speicher (aus dem Export), daher ist das Holen sofort da - ohne erneute   }
-{  Iteration ueber das (grosse) Board.                                          }
+{  Kein Timer/Polling noetig: ein Klick holt genau einmal. Liegt die Track-Liste}
+{  noch im Speicher (aus dem Export), wird sie als schnelle Abkuerzung genutzt.  }
+{  Ist sie weg (z.B. nach Altium-Neustart), findet DoApply die Tracks per        }
+{  KLEINER raeumlicher Suche ueber die vom Server mitgelieferte Ursprungslage -  }
+{  daher NIE mehr eine komplette Iteration ueber das (grosse) Board beim Anwenden.}
 {                                                                              }
 {  Nur Tracks MIT Net und OHNE TOP/BOTTOM werden exportiert/behandelt           }
 {  (ohne Net = Flaechenfuellung; TOP/BOTTOM sollen nie gezeigt werden).         }
@@ -207,6 +210,119 @@ end;
 
 
 {------------------------------------------------------------------------------}
+{ Raeumliche Track-Suche (fuer den "kalten" Fall ohne Zuordnung im Speicher).    }
+{                                                                              }
+{ Der Server liefert in bridge_cmd.txt jetzt zusaetzlich die URSPRUNGSLAGE      }
+{ (ox;oy) des zu bewegenden Endpunkts und den Layernamen mit. Damit findet der   }
+{ folgende Helfer den Track ueber einen KLEINEN raeumlichen Iterator wieder -    }
+{ ohne das ganze Board neu durchzugehen. So muss ApplyFixes nach einem Neustart  }
+{ nicht mehr minutenlang alles neu einlesen (frueher: RebuildTrackList).         }
+{                                                                              }
+{ Sicher: gesucht wird nur ein Track, dessen Endpunkt endNo SEHR nah an (ox,oy)  }
+{ liegt und dessen Layer passt. Fehlerstellen sind partnerlos (kein zweiter      }
+{ Endpunkt an genau dieser Stelle), also ist der Treffer eindeutig. Bei 0 oder   }
+{ >1 Treffern wird NICHTS bewegt (nil) - lieber einen Fix auslassen als den      }
+{ falschen Track verschieben.                                                    }
+{------------------------------------------------------------------------------}
+function LocateEndpoint(oxmm, oymm : Double; endNo : Integer;
+                        const layName : String) : IPCB_Track;
+var
+  SpIter : IPCB_SpatialIterator;
+  Trk, hit : IPCB_Track;
+  cx, cy, r : TCoord;
+  tol, ex, ey : Double;
+  nhits : Integer;
+  okLayer : Boolean;
+begin
+  Result := nil;
+  hit := nil;
+  nhits := 0;
+  if Board = nil then Exit;
+
+  cx  := Board.XOrigin + MMsToCoord(oxmm);
+  cy  := Board.YOrigin + MMsToCoord(oymm);
+  r   := MMsToCoord(0.1);    // 100 um Suchfenster um die Ursprungslage
+  tol := 0.003;              // mm: so nah muss der Endpunkt an (ox,oy) liegen
+
+  SpIter := Board.SpatialIterator_Create;
+  try
+    SpIter.AddFilter_ObjectSet(MkSet(eTrackObject));
+    SpIter.AddFilter_Area(cx - r, cy - r, cx + r, cy + r);
+    Trk := SpIter.FirstPCBObject;
+    while Trk <> nil do
+    begin
+      okLayer := (layName = '') or (Board.LayerName(Trk.Layer) = layName);
+      if okLayer then
+      begin
+        if endNo = 2 then
+        begin
+          ex := CoordToMMs(Trk.X2 - Board.XOrigin);
+          ey := CoordToMMs(Trk.Y2 - Board.YOrigin);
+        end
+        else
+        begin
+          ex := CoordToMMs(Trk.X1 - Board.XOrigin);
+          ey := CoordToMMs(Trk.Y1 - Board.YOrigin);
+        end;
+        if (Abs(ex - oxmm) <= tol) and (Abs(ey - oymm) <= tol) then
+        begin
+          nhits := nhits + 1;
+          hit := Trk;
+        end;
+      end;
+      Trk := SpIter.NextPCBObject;
+    end;
+  finally
+    Board.SpatialIterator_Destroy(SpIter);
+  end;
+
+  if nhits = 1 then Result := hit;   // eindeutig -> sicher; sonst nil (auslassen)
+end;
+
+
+{ Beliebigen (naechstgelegenen) Track nahe (xmm,ymm) finden - nur fuer den Layer }
+{ beim "Im Altium finden"-Sprung, wenn die Zuordnung nicht im Speicher liegt.    }
+function LocateAnyTrackNear(xmm, ymm, radmm : Double) : IPCB_Track;
+var
+  SpIter : IPCB_SpatialIterator;
+  Trk, best : IPCB_Track;
+  cx, cy, r : TCoord;
+  bestD, d, ex, ey : Double;
+begin
+  Result := nil;
+  best := nil;
+  bestD := 1.0E30;
+  if Board = nil then Exit;
+
+  cx := Board.XOrigin + MMsToCoord(xmm);
+  cy := Board.YOrigin + MMsToCoord(ymm);
+  r  := MMsToCoord(radmm);
+
+  SpIter := Board.SpatialIterator_Create;
+  try
+    SpIter.AddFilter_ObjectSet(MkSet(eTrackObject));
+    SpIter.AddFilter_Area(cx - r, cy - r, cx + r, cy + r);
+    Trk := SpIter.FirstPCBObject;
+    while Trk <> nil do
+    begin
+      ex := CoordToMMs(Trk.X1 - Board.XOrigin) - xmm;
+      ey := CoordToMMs(Trk.Y1 - Board.YOrigin) - ymm;
+      d  := ex * ex + ey * ey;                       // quadr. Abstand Endpunkt 1
+      ex := CoordToMMs(Trk.X2 - Board.XOrigin) - xmm;
+      ey := CoordToMMs(Trk.Y2 - Board.YOrigin) - ymm;
+      if (ex * ex + ey * ey) < d then d := ex * ex + ey * ey;  // ... vs Endpunkt 2
+      if d < bestD then begin bestD := d; best := Trk; end;
+      Trk := SpIter.NextPCBObject;
+    end;
+  finally
+    Board.SpatialIterator_Destroy(SpIter);
+  end;
+
+  Result := best;
+end;
+
+
+{------------------------------------------------------------------------------}
 { Fixes aus bridge_cmd.txt auf die (im Speicher liegende) TrackList anwenden.   }
 { Der Server schreibt nur noch offene Fixes in bridge_cmd.txt, also werden hier  }
 { genau die neuen angewendet. Rueckgabe: Anzahl angepasster Endpunkte.          }
@@ -215,14 +331,17 @@ function DoApply(Dummy : Integer) : Integer;
 var
   cmd, parts, results : TStringList;
   i, tid, endNo, applied : Integer;
-  fid : String;
-  xmm, ymm : Double;
+  fid, layName : String;
+  xmm, ymm, oxmm, oymm : Double;
   cx, cy : TCoord;
   Trk : IPCB_Track;
-  okMove : Boolean;
+  okMove, warm : Boolean;
 begin
   Result := 0;
-  if (Board = nil) or (TrackCount = 0) then Exit;
+  // Board muss da sein - die Track-Zuordnung im Speicher ist NICHT mehr noetig:
+  // fehlt sie (kalt, z.B. nach Altium-Neustart), findet DoApply die Tracks per
+  // raeumlicher Suche ueber die vom Server mitgelieferte Ursprungslage.
+  if Board = nil then Exit;
   if not FileExists(CmdPath) then Exit;
 
   cmd := TStringList.Create;
@@ -249,28 +368,42 @@ begin
       fid   := parts[0];
       tid   := StrToIntDef(parts[1], -1);
       endNo := StrToIntDef(parts[2], 0);
-      xmm   := DotStrToFloat(parts[3]);
+      xmm   := DotStrToFloat(parts[3]);     // Zielkoordinaten
       ymm   := DotStrToFloat(parts[4]);
+      // Neue Felder (rueckwaertskompatibel): Ursprungslage (ox;oy) + Layername.
+      oxmm := 0.0; oymm := 0.0; layName := '';
+      if parts.Count >= 7 then
+      begin
+        oxmm := DotStrToFloat(parts[5]);
+        oymm := DotStrToFloat(parts[6]);
+      end;
+      if parts.Count >= 8 then layName := parts[7];
+
+      // Track aufloesen: 1) schnelle Abkuerzung ueber die Zuordnung im Speicher
+      // (nur wenn sie zum aktuellen Board gehoert), sonst 2) raeumliche Suche
+      // ueber die Ursprungslage - dann ist KEIN Neu-Einlesen des Boards noetig.
+      Trk := nil;
+      warm := (BuiltForBoard = Board) and (tid >= 0) and
+              (tid < TrackCount) and (tid < MAX_TRACKS);
+      if warm then Trk := TrackArr[tid];
+      if (Trk = nil) and (parts.Count >= 7) then
+        Trk := LocateEndpoint(oxmm, oymm, endNo, layName);
 
       okMove := False;
-      if (tid >= 0) and (tid < TrackCount) and (tid < MAX_TRACKS) then
+      if Trk <> nil then
       begin
-        Trk := TrackArr[tid];
-        if Trk <> nil then
-        begin
-          cx := Board.XOrigin + MMsToCoord(xmm);
-          cy := Board.YOrigin + MMsToCoord(ymm);
-          try
-            Trk.BeginModify;
-            if endNo = 1 then begin Trk.X1 := cx; Trk.Y1 := cy; end
-            else               begin Trk.X2 := cx; Trk.Y2 := cy; end;
-            Trk.EndModify;
-            Trk.GraphicallyInvalidate;
-            okMove := True;
-            applied := applied + 1;
-          except
-            okMove := False;
-          end;
+        cx := Board.XOrigin + MMsToCoord(xmm);
+        cy := Board.YOrigin + MMsToCoord(ymm);
+        try
+          Trk.BeginModify;
+          if endNo = 1 then begin Trk.X1 := cx; Trk.Y1 := cy; end
+          else               begin Trk.X2 := cx; Trk.Y2 := cy; end;
+          Trk.EndModify;
+          Trk.GraphicallyInvalidate;
+          okMove := True;
+          applied := applied + 1;
+        except
+          okMove := False;
         end;
       end;
 
@@ -316,6 +449,7 @@ var
   xmm, ymm : Double;
   cx, cy, r : TCoord;
   tid : Integer;
+  NearTrk : IPCB_Track;
 begin
   Result := False;
   if (Board = nil) or (JumpPath = '') then Exit;
@@ -343,16 +477,23 @@ begin
     cy  := Board.YOrigin + MMsToCoord(ymm);
     r   := MMsToCoord(2.0);   // ~4x4 mm Ausschnitt um den Punkt
     try
-      // Layer des zugehoerigen Tracks aktiv setzen (falls Track-ID mitkam).
+      // Layer des zugehoerigen Tracks aktiv setzen. Erst die Zuordnung im
+      // Speicher probieren (nur wenn sie zum aktuellen Board gehoert), sonst
+      // raeumlich den naechsten Track am Punkt suchen - so klappt es auch
+      // "kalt" (nach Neustart, ohne Zuordnung im Speicher).
+      NearTrk := nil;
       if parts.Count >= 3 then
       begin
         tid := StrToIntDef(parts[2], -1);
-        if (tid >= 0) and (tid < TrackCount) and (tid < MAX_TRACKS) then
-        begin
-          if TrackArr[tid] <> nil then
-            Board.CurrentLayer := TrackArr[tid].Layer;
-        end;
+        if (BuiltForBoard = Board) and (tid >= 0) and
+           (tid < TrackCount) and (tid < MAX_TRACKS) then
+          NearTrk := TrackArr[tid];
       end;
+      if NearTrk = nil then
+        NearTrk := LocateAnyTrackNear(xmm, ymm, 0.5);
+      if NearTrk <> nil then
+        Board.CurrentLayer := NearTrk.Layer;
+
       Board.GraphicalView_ZoomOnRect(cx - r, cy - r, cx + r, cy + r);
       Board.GraphicalView_ZoomRedraw;
       Result := True;
@@ -482,7 +623,12 @@ begin
 
   Iter := Board.BoardIterator_Create;
   Iter.AddFilter_ObjectSet(MkSet(eTrackObject));
-  Iter.AddFilter_LayerSet(AllLayers);
+  // TOP/BOTTOM schon HIER ausschliessen (nicht erst je Track pruefen): der
+  // Iterator liefert diese Layer dann gar nicht mehr - spart bei mehrlagigen
+  // Boards die meiste Arbeit. AllLayers ist eine Menge, minus die zwei
+  // Aussenlagen. Der Check unten in der Schleife bleibt als Sicherheitsnetz,
+  // falls die Mengendifferenz auf einer Altium-Version nicht greifen sollte.
+  Iter.AddFilter_LayerSet(AllLayers - MkSet(eTopLayer, eBottomLayer));
   Iter.AddFilter_Method(eProcessAll);
 
   first        := True;
@@ -501,10 +647,9 @@ begin
     if (iterated mod 5000) = 0 then
     begin
       VCForm.LabelStatus.Caption :=
-        'Lese Tracks ... bitte warten.' + #13#10#13#10 +
-        'Geprueft: ' + IntToStr(iterated) + #13#10 +
-        'Exportiert (mit Net, ohne TOP/BOTTOM): ' + IntToStr(id) + #13#10 +
-        'TOP/BOTTOM uebersprungen: ' + IntToStr(skippedLayer);
+        'Lese Innenlagen-Tracks ... bitte warten.' + #13#10#13#10 +
+        'Durchlaufen (TOP/BOTTOM schon am Iterator raus): ' + IntToStr(iterated) +
+        #13#10 + 'Exportiert (mit Net): ' + IntToStr(id);
       try Application.ProcessMessages; except end;
     end;
 
@@ -589,18 +734,21 @@ begin
 
   RunApplyLoop(
     'Export fertig: ' + IntToStr(id) + ' Tracks (mit Net, ohne TOP/BOTTOM). ' +
-    'Uebersprungen: TOP/BOTTOM ' + IntToStr(skippedLayer) +
-    ', ohne Net ' + IntToStr(netless) + '.' + #13#10#13#10 +
+    'TOP/BOTTOM schon am Iterator ausgeschlossen (Sicherheitsnetz fing ' +
+    IntToStr(skippedLayer) + '), ohne Net ' + IntToStr(netless) + '.' +
+    #13#10#13#10 +
     'Der Browser-Report sollte offen sein (sonst start_watcher.bat starten). ' +
     'Jetzt die Fehler im Browser anklicken, dann hier "Aenderungen uebernehmen".');
 end;
 
 
 {------------------------------------------------------------------------------}
-{ TrackList ohne erneuten Export neu aufbauen (nur Board-Iteration, kein JSON).  }
-{ MUSS exakt denselben Filter/dieselbe Reihenfolge wie der Export nutzen, damit  }
-{ die IDs zu den im Browser gewaehlten Fixes passen. Iteriert das GANZE Board,   }
-{ nicht nur bis zur hoechsten ID - man kann im Browser ja neue Fehler anklicken. }
+{ OPTIONALER FALLBACK - wird im Normalbetrieb NICHT mehr aufgerufen.             }
+{ ApplyFixes braucht die Zuordnung nicht mehr neu aufzubauen (DoApply findet     }
+{ Tracks raeumlich ueber die Ursprungslage). Diese Funktion bleibt nur als       }
+{ Notnagel: Sollte die raeumliche Suche auf einer Altium-Version einmal nicht    }
+{ greifen, kann man sie hier wieder in ApplyFixes einhaengen. Sie iteriert das   }
+{ GANZE Board mit demselben Filter/derselben Reihenfolge wie der Export.         }
 { Rueckgabe: True bei Erfolg.                                                   }
 {------------------------------------------------------------------------------}
 function RebuildTrackList(Dummy : Integer) : Boolean;
@@ -622,7 +770,12 @@ begin
   TrackReset(0);
   Iter := Board.BoardIterator_Create;
   Iter.AddFilter_ObjectSet(MkSet(eTrackObject));
-  Iter.AddFilter_LayerSet(AllLayers);
+  // TOP/BOTTOM schon HIER ausschliessen (nicht erst je Track pruefen): der
+  // Iterator liefert diese Layer dann gar nicht mehr - spart bei mehrlagigen
+  // Boards die meiste Arbeit. AllLayers ist eine Menge, minus die zwei
+  // Aussenlagen. Der Check unten in der Schleife bleibt als Sicherheitsnetz,
+  // falls die Mengendifferenz auf einer Altium-Version nicht greifen sollte.
+  Iter.AddFilter_LayerSet(AllLayers - MkSet(eTopLayer, eBottomLayer));
   Iter.AddFilter_Method(eProcessAll);
   iterated := 0;
   runaway  := False;
@@ -682,12 +835,15 @@ begin
   AckPath  := WorkDir + '\bridge_ack.txt';
   JumpPath := WorkDir + '\bridge_jump.txt';
 
-  if (TrackCount = 0) or (BuiltForBoard <> Board) then
-    if not RebuildTrackList(0) then Exit;
-
+  // KEIN Neu-Iterieren mehr: Liegt die Zuordnung noch im Speicher (gleiches
+  // Board, z.B. nach "Fertig" in derselben Sitzung), nutzt DoApply sie als
+  // schnelle Abkuerzung. Ist sie weg (z.B. nach Altium-Neustart), findet
+  // DoApply die Tracks per raeumlicher Suche ueber die vom Server gelieferte
+  // Ursprungslage. In BEIDEN Faellen ist das Menue SOFORT da - der frueher
+  // noetige, minutenlange Neu-Aufbau (RebuildTrackList) entfaellt.
   RunApplyLoop(
-    'Menue erneut geoeffnet (kein neuer Export). Im Browser die Fehler ' +
-    'anklicken, dann "Aenderungen uebernehmen" - oder "Fertig".');
+    'Menue erneut geoeffnet (kein neuer Export, kein Neu-Einlesen). Im Browser ' +
+    'die Fehler anklicken, dann "Aenderungen uebernehmen" - oder "Fertig".');
 end;
 
 end.

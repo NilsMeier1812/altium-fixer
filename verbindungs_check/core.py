@@ -259,8 +259,11 @@ def compute_fix(rec):
       status : 'intersection' | 'midpoint' | 'unsolvable'
       tx, ty : Zielkoordinaten (None bei unsolvable)
       label  : Kurztext fuer die Anzeige
-      moves  : Liste [(track_id, end, tx, ty), ...] fuer beide Endpunkte
-               (leer bei unsolvable)
+      moves  : Liste [(track_id, end, tx, ty, ox, oy, layer), ...] fuer beide
+               Endpunkte (leer bei unsolvable). ox/oy = urspruengliche Lage des
+               Endpunkts, layer = Layername - damit Altium den Track beim
+               Anwenden auch OHNE die im Speicher liegende Zuordnung wieder
+               findet (raeumliche Suche statt komplettem Neu-Iterieren).
     """
     ax, ay = rec["xa"], rec["ya"]
     bx, by = rec["xb"], rec["yb"]
@@ -268,11 +271,12 @@ def compute_fix(rec):
     dbx, dby = rec["oxb"] - bx, rec["oyb"] - by
 
     denom = dax * dby - day * dbx  # Kreuzprodukt der Richtungen
+    layer = rec.get("layer", "")
 
     def _moves(tx, ty):
         return [
-            (rec["track_a"], rec["end_a"], tx, ty),
-            (rec["track_b"], rec["end_b"], tx, ty),
+            (rec["track_a"], rec["end_a"], tx, ty, ax, ay, layer),
+            (rec["track_b"], rec["end_b"], tx, ty, bx, by, layer),
         ]
 
     # Nicht parallel -> eindeutiger Schnittpunkt der unendlichen Geraden
@@ -604,7 +608,7 @@ def _error_block(e, group_lines, idx, server_mode):
     <code>{esc(search)}</code>
     <button onclick="cp(this)">Kopieren</button>
   </div>
-  <div class="dist">Abstand: <b>{d:.4f} mm</b>
+  <div class="dist"><span class="laytag">{esc(layer)}</span>Abstand: <b>{d:.4f} mm</b>
      &nbsp;&middot;&nbsp; Ueberlappung: <b>{e["overlap"]:.0f}%</b>
      &nbsp;&middot;&nbsp; {esc(e["kind"])}</div>
   <div class="sub">Width A {e["wa"]:.3f} / B {e["wb"]:.3f} mm &middot;
@@ -677,6 +681,8 @@ def build_html(real_errors, overlaps, group_lines, stats, filename,
             'Abstand &darr; (groesster zuerst)</button>'
             '<button class="sortbtn" onclick="sortBy(\'overlap\',this)">'
             'Ueberlappung &uarr; (kleinste zuerst)</button>'
+            '<button class="sortbtn" onclick="sortBy(\'layer\',this)">'
+            'Layer (gruppiert)</button>'
             '<label style="margin-left:14px"><input type="checkbox" id="hideDone" '
             'onchange="applyFilter()"> erledigte ausblenden</label>'
             f'{mode_badge}'
@@ -779,6 +785,10 @@ _STYLE = """
     .search button:hover { background: #eef0f3; }
     .dist { font-size: 14px; margin-bottom: 4px; }
     .dist b { color: #c4302b; }
+    .laytag { display: inline-block; background: #eef1f6; color: #384250;
+              border: 1px solid #dde1e8; border-radius: 5px; padding: 1px 7px;
+              font-size: 12px; font-weight: 600; margin-right: 8px;
+              vertical-align: 1px; }
     .sub { font-size: 12px; color: #5f6b7c; margin-bottom: 12px; }
     .fix { display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
            background: #f0f7f1; border: 1px solid #cfe6d4; border-radius: 8px;
@@ -846,6 +856,15 @@ def _script(server_mode):
       document.querySelectorAll('.blocks').forEach(function(c){
         var items = Array.prototype.slice.call(c.children);
         items.sort(function(a, b){
+          if (key === 'layer'){
+            // Nach Layer-Namen gruppieren (natuerlich, also Mid-Layer 2 vor 10),
+            // innerhalb eines Layers weiter nach Abstand (groesster zuerst).
+            var al = a.getAttribute('data-layer') || '';
+            var bl = b.getAttribute('data-layer') || '';
+            if (al !== bl)
+              return al.localeCompare(bl, undefined, {numeric: true, sensitivity: 'base'});
+            return parseFloat(b.dataset.dist) - parseFloat(a.dataset.dist);
+          }
           var av = parseFloat(a.dataset[key]), bv = parseFloat(b.dataset[key]);
           return key === 'dist' ? bv - av : av - bv;
         });

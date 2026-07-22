@@ -24,9 +24,10 @@ def test_intersection():
     assert fix["status"] == "intersection"
     assert abs(fix["tx"] - 0.0) < 1e-9
     assert abs(fix["ty"] - 0.0) < 1e-9
-    # Zwei Moves auf denselben Zielpunkt
+    # Zwei Moves auf denselben Zielpunkt (jetzt mit Original-Koordinaten + Layer)
     assert len(fix["moves"]) == 2
-    for (tid, end, tx, ty) in fix["moves"]:
+    for m in fix["moves"]:
+        tid, end, tx, ty, ox, oy, layer = m
         assert abs(tx) < 1e-9 and abs(ty) < 1e-9
 
 
@@ -72,6 +73,14 @@ def test_analyze_finds_corner_error():
     # Moves referenzieren beide Tracks
     tids = {m[0] for m in e["fix"]["moves"]}
     assert tids == {0, 1}
+    # ... und tragen Original-Lage + Layer (Basis fuer die raeumliche Suche in Altium)
+    for m in e["fix"]["moves"]:
+        tid, end, tx, ty, ox, oy, layer = m
+        assert layer == "Top"
+    by_track = {m[0]: m for m in e["fix"]["moves"]}
+    # Track 0: bewegter Endpunkt war (0.1, 0.0); Track 1: (0.0, 0.1)
+    assert abs(by_track[0][4] - 0.1) < 1e-9 and abs(by_track[0][5] - 0.0) < 1e-9
+    assert abs(by_track[1][4] - 0.0) < 1e-9 and abs(by_track[1][5] - 0.1) < 1e-9
 
 
 def test_analyze_connected_no_error():
