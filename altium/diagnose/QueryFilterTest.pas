@@ -168,3 +168,128 @@ begin
 
   ShowMessage(msg);
 end;
+
+
+{..............................................................................}
+{  V2: WELCHER Aufruf legt Objekte wirklich in Board.SelectecObject?            }
+{                                                                              }
+{  Der erste Test zeigte: RunProcess laeuft, aber PCB:RunQuery mit Select=True  }
+{  selektiert 0 (maskiert vermutlich nur). Diese Prozedur probiert in EINEM     }
+{  Lauf mehrere Selektier-Varianten durch und zeigt je Variante die            }
+{  SelectecObjectCount. Keine 66-s-Voll-Iteration - laeuft schnell.            }
+{                                                                              }
+{  Baseline (PCB:Select Scope=All) MUSS eine grosse Zahl (~alle Objekte)        }
+{  liefern. Tut sie das nicht, zaehlt SelectecObjectCount generell nicht - dann }
+{  ist Selektion der falsche Weg. Liefert die Baseline viel, eine Query-Variante }
+{  aber die ~132820 (Tracks mit Net) -> DAS ist der richtige Aufruf.            }
+{                                                                              }
+{  Bitte die Zahlen aller Zeilen melden.                                        }
+{..............................................................................}
+
+function SelCntOf(B : IPCB_Board) : Integer;
+begin
+  Result := -1;
+  try Result := B.SelectecObjectCount; except Result := -1; end;
+end;
+
+procedure DeselAll(Dummy : Integer);
+begin
+  try
+    ResetParameters;
+    AddStringParameter('Scope', 'All');
+    RunProcess('PCB:DeSelect');
+  except
+  end;
+end;
+
+procedure TestQuerySelectVariants;
+var
+  Board : IPCB_Board;
+  cAll, c1, c2, c3, c4 : Integer;
+  q : String;
+  msg : String;
+begin
+  if PCBServer = nil then begin ShowMessage('PCBServer = nil'); Exit; end;
+  Board := PCBServer.GetCurrentPCBBoard;
+  if Board = nil then begin ShowMessage('Board = nil'); Exit; end;
+
+  q := '(ObjectKind = ''Track'') And Not (Net = ''No Net'')';
+
+  { --- Baseline: alles selektieren (zeigt, ob SelectecObjectCount zaehlt) --- }
+  DeselAll(0);
+  try
+    ResetParameters;
+    AddStringParameter('Scope', 'All');
+    RunProcess('PCB:Select');
+  except end;
+  cAll := SelCntOf(Board);
+
+  { --- V1: RunQuery mit Select=True UND Mask=True --- }
+  DeselAll(0);
+  try
+    ResetParameters;
+    AddStringParameter('Apply', 'True');
+    AddStringParameter('Expr', q);
+    AddStringParameter('Mask', 'True');
+    AddStringParameter('Select', 'True');
+    AddStringParameter('ClearExisting', 'True');
+    RunProcess('PCB:RunQuery');
+  except end;
+  c1 := SelCntOf(Board);
+
+  { --- V2: erst RunQuery-Maske, dann PCB:Select ueber die Maske --- }
+  DeselAll(0);
+  try
+    ResetParameters;
+    AddStringParameter('Apply', 'True');
+    AddStringParameter('Expr', q);
+    AddStringParameter('Mask', 'True');
+    AddStringParameter('ClearExisting', 'True');
+    RunProcess('PCB:RunQuery');
+    ResetParameters;
+    AddStringParameter('Scope', 'Filter');   // ggf. gefilterte/maskierte waehlen
+    RunProcess('PCB:Select');
+  except end;
+  c2 := SelCntOf(Board);
+
+  { --- V3: Prozess PCB:Filter statt PCB:RunQuery --- }
+  DeselAll(0);
+  try
+    ResetParameters;
+    AddStringParameter('Apply', 'True');
+    AddStringParameter('Expr', q);
+    AddStringParameter('Mask', 'True');
+    AddStringParameter('Select', 'True');
+    RunProcess('PCB:Filter');
+  except end;
+  c3 := SelCntOf(Board);
+
+  { --- V4: RunQuery, Objekt-Highlight-Methode -> Select --- }
+  DeselAll(0);
+  try
+    ResetParameters;
+    AddStringParameter('Apply', 'True');
+    AddStringParameter('Expr', q);
+    AddStringParameter('Select', 'True');
+    AddStringParameter('Mask', 'False');
+    AddStringParameter('Zoom', 'False');
+    AddStringParameter('Index', '1');
+    AddStringParameter('ClearExisting', 'True');
+    AddStringParameter('Highlight', 'True');
+    RunProcess('PCB:RunQuery');
+  except end;
+  c4 := SelCntOf(Board);
+
+  DeselAll(0);   { Aufraeumen }
+
+  msg :=
+    'Ziel: eine Variante soll ~132820 (Tracks mit Net) liefern.' + #13#10 +
+    '(Baseline soll ~alle Objekte, also gross, liefern.)' + #13#10 + #13#10 +
+    'Baseline PCB:Select Scope=All:            ' + IntToStr(cAll) + #13#10 +
+    'V1 RunQuery Select+Mask:                  ' + IntToStr(c1) + #13#10 +
+    'V2 RunQuery Maske + PCB:Select Scope=Filter: ' + IntToStr(c2) + #13#10 +
+    'V3 PCB:Filter Select+Mask:                ' + IntToStr(c3) + #13#10 +
+    'V4 RunQuery Select+Highlight:             ' + IntToStr(c4) + #13#10 + #13#10 +
+    'Bitte alle Zahlen melden. -1 = SelectecObjectCount hat geworfen.';
+  ShowMessage(msg);
+end;
