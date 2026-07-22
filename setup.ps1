@@ -226,15 +226,33 @@ function Ensure-Requirements {
 # 5. Autostart einrichten
 # ============================================================================
 function Ensure-Autostart {
-    Info "Lege den Hintergrund-Watcher in den Autostart ..."
+    Info "Lege eine Verknuepfung des Watchers in den Autostart ..."
     $vbs = Join-Path $InstallDir "start_watcher_hidden.vbs"
     if (-not (Test-Path $vbs)) { Warn "start_watcher_hidden.vbs fehlt - uebersprungen."; return }
     $startup = [Environment]::GetFolderPath("Startup")
-    $target  = Join-Path $startup "Verbindungs-Check-Watcher.vbs"
-    Copy-Item -Path $vbs -Destination $target -Force
-    Ok "In den Autostart kopiert:"
-    Step "$target"
+
+    # Alte KOPIE aus frueheren Setup-Versionen entfernen (sonst startet der
+    # Watcher doppelt: einmal ueber die Kopie, einmal ueber die Verknuepfung).
+    $oldCopy = Join-Path $startup "Verbindungs-Check-Watcher.vbs"
+    if (Test-Path $oldCopy) {
+        Remove-Item $oldCopy -Force -ErrorAction SilentlyContinue
+        Step "Alte Autostart-Kopie entfernt: $oldCopy"
+    }
+
+    # VERKNUEPFUNG statt Kopie: sie zeigt auf die .vbs im Repo. So laeuft nach
+    # einem 'git pull' automatisch die aktuelle Version - kein erneutes Setup.
+    $link = Join-Path $startup "Verbindungs-Check-Watcher.lnk"
+    $wsh  = New-Object -ComObject WScript.Shell
+    $sc   = $wsh.CreateShortcut($link)
+    $sc.TargetPath       = $vbs
+    $sc.WorkingDirectory = $InstallDir
+    $sc.Description       = "Verbindungs-Check Hintergrund-Watcher"
+    $sc.Save()
+
+    Ok "Verknuepfung im Autostart angelegt:"
+    Step "$link  ->  $vbs"
     Step "(Der Watcher startet ab dem naechsten Windows-Login automatisch, unsichtbar.)"
+    Step "Nach einem Update genuegt 'git pull' - die Verknuepfung bleibt gueltig."
 }
 
 # ============================================================================

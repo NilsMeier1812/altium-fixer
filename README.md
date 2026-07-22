@@ -85,6 +85,18 @@ Installationen und fällt sonst automatisch auf Direkt-Downloads zurück.
 Wer lieber jeden Schritt selbst macht (oder kein Windows nutzt), folgt der
 manuellen Anleitung unten.
 
+> **Später aktualisieren:** Das Setup legt in den Autostart eine **Verknüpfung**
+> auf `start_watcher_hidden.vbs` im Repo (keine Kopie). Bei einer neuen Version
+> genügt daher:
+> ```
+> cd C:\altium-track-fixer
+> git pull
+> ```
+> Danach den laufenden Watcher einmal neu starten (Task-Manager → `pythonw.exe`
+> beenden, dann die Autostart-Verknüpfung doppelklicken oder neu anmelden). Die
+> Autostart-Verknüpfung zeigt automatisch auf die aktualisierte Datei – das
+> Setup muss **nicht** erneut laufen.
+
 ---
 
 ### 1. Python
