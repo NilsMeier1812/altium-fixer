@@ -1,0 +1,13 @@
+[Design]
+Version=1.0
+HierarchyMode=1
+ChannelRoomLevelSeparator=:
+ChannelComponentLevelSeparator=_
+NamingSourceUniqueID=
+
+[Documents]
+DocumentCount=1
+
+[Document1]
+DocumentPath=QueryFilterTest.pas
+AnnotationEnabled=1

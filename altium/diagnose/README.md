@@ -34,6 +34,11 @@ Testet, ob sich Tracks **ohne Net** über die native Query-Engine **vorfiltern**
 lassen (wie im PCB-Filter-Panel `(ObjectKind = 'Track') And Not (Net = 'No Net')`),
 statt sie einzeln in der Schleife per `Trk.Net = nil` auszusortieren.
 
+**Ausführen** (falls „Run Script → Browse" bei dir nur mit Projekt geht):
+In Altium **File → Open** → `altium/diagnose/QueryFilterTest.PrjScr` (Skriptprojekt),
+dann **DXP → Run Script…** → Prozedur **`TestQueryFilter`** wählen. Alternativ,
+wenn eine lose `.pas` bei dir doch läuft: direkt `QueryFilterTest.pas` browsen.
+
 Prozedur **`TestQueryFilter`** macht in einem Durchlauf:
 
 - **Referenz** per Voll-Iteration: Tracks gesamt / mit Net / mit Net & ohne
