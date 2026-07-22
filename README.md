@@ -20,11 +20,13 @@ Der Zielpunkt ist in der Zoom-Grafik **grün markiert** (mit Pfeilen von den
 alten Punkten), bevor man klickt.
 
 **Was exportiert wird:** alle Innenlagen, aber **nur Tracks mit Net** und **ohne
-TOP/BOTTOM**. TOP und BOTTOM sollen nie ausgewertet werden und werden **schon am
-Board-Iterator ausgeschlossen** (`AddFilter_LayerSet(AllLayers - {eTopLayer,
-eBottomLayer})`) – der Iterator liefert diese Layer also gar nicht erst, statt sie
-pro Track zu prüfen. Ein zusätzlicher Check in der Schleife bleibt als
-Sicherheitsnetz. Tracks ohne Net sind vor allem die
+TOP/BOTTOM**. TOP und BOTTOM sollen nie ausgewertet werden und werden **früh in
+der Track-Schleife übersprungen** – noch **vor** der teuren Net-/String-/Add-Arbeit,
+die den Großteil der Zeit kostet. (Ein echter Layer-Set-Filter direkt am Iterator
+`AddFilter_LayerSet(AllLayers - MkSet(eTopLayer, eBottomLayer))` wäre schöner, ist
+in diesem DelphiScript aber **nicht möglich**: der Set-Differenz-Operator wirft
+`Could not convert variant of type (OleStr) into type (Double)`. Der frühe
+Schleifen-Skip ist deshalb der zuverlässige Weg.) Tracks ohne Net sind vor allem die
 Füllprimitive von Kupferflächen/Polygonen – sie tragen kein Net, machen aber oft
 den Großteil der Objekte aus (z. B. 300k+). Die Analyse braucht das Net ohnehin
 (gruppiert nach Layer + Net), also fliegen sie raus. Das reduziert die Datenmenge
@@ -39,8 +41,8 @@ den Button **„Layer (gruppiert)"**: er sortiert alle Fehler nach Layer-Namen
 (natürliche Reihenfolge, also *Mid-Layer 2* vor *Mid-Layer 10*) und innerhalb
 eines Layers weiter nach Abstand. Jeder Fehlerblock trägt außerdem ein
 **Layer-Tag**, damit die Gruppierung sofort sichtbar ist. (Weitere Layer schon
-beim Export weglassen: in `RunVerbindungsCheck` die Layer-Menge am Iterator
-`AllLayers - MkSet(eTopLayer, eBottomLayer)` um weitere Layer erweitern.)
+beim Export weglassen: in `RunVerbindungsCheck` in der Track-Schleife die
+`eTopLayer`/`eBottomLayer`-Bedingung um weitere Layer ergänzen.)
 
 > **Große Boards:** Altium-Skripte iterieren einzeln über jedes Objekt – das ist
 > langsam und kann bei sehr großen Boards **mehrere Minuten** dauern. Während
@@ -305,11 +307,12 @@ einen Fix auslassen als den falschen Track verschieben). So ist `ApplyFixes`
 **sofort** da statt nach Minuten. Wichtig bleibt: das **gleiche PcbDoc** muss aktiv
 sein und sollte zwischen Export und Anwenden nicht strukturell verändert werden.
 
-> **Fallback:** Sollte die räumliche Suche auf einer bestimmten Altium-Version
-> einmal nicht greifen, hilft im Zweifel ein frischer `RunVerbindungsCheck`
-> (voller Export) – das entspricht dem alten Verhalten. Die frühere Funktion
-> `RebuildTrackList` (komplettes Neu-Iterieren) liegt als Notnagel weiterhin im
-> Skript, wird aber nicht mehr automatisch aufgerufen.
+> **Automatischer Fallback:** `ApplyFixes` prüft im kalten Fall **einmal**, ob
+> der räumliche Iterator auf deiner Altium-Version läuft (`ProbeSpatial`). Läuft
+> er, ist das Menü sofort da. Läuft er **nicht**, fällt `ApplyFixes` automatisch
+> auf den alten Komplett-Neuaufbau (`RebuildTrackList`, langsam, aber immer
+> funktionierend) zurück. So ist das Verhalten nie schlechter als früher – im
+> Normalfall aber sofort.
 
 ---
 

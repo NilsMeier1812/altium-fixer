@@ -244,37 +244,45 @@ begin
   r   := MMsToCoord(0.1);    // 100 um Suchfenster um die Ursprungslage
   tol := 0.003;              // mm: so nah muss der Endpunkt an (ox,oy) liegen
 
-  SpIter := Board.SpatialIterator_Create;
+  SpIter := nil;
   try
-    SpIter.AddFilter_ObjectSet(MkSet(eTrackObject));
-    SpIter.AddFilter_Area(cx - r, cy - r, cx + r, cy + r);
-    Trk := SpIter.FirstPCBObject;
-    while Trk <> nil do
+    SpIter := Board.SpatialIterator_Create;
+    if SpIter <> nil then
     begin
-      okLayer := (layName = '') or (Board.LayerName(Trk.Layer) = layName);
-      if okLayer then
+      SpIter.AddFilter_ObjectSet(MkSet(eTrackObject));
+      SpIter.AddFilter_Area(cx - r, cy - r, cx + r, cy + r);
+      Trk := SpIter.FirstPCBObject;
+      while Trk <> nil do
       begin
-        if endNo = 2 then
+        okLayer := (layName = '') or (Board.LayerName(Trk.Layer) = layName);
+        if okLayer then
         begin
-          ex := CoordToMMs(Trk.X2 - Board.XOrigin);
-          ey := CoordToMMs(Trk.Y2 - Board.YOrigin);
-        end
-        else
-        begin
-          ex := CoordToMMs(Trk.X1 - Board.XOrigin);
-          ey := CoordToMMs(Trk.Y1 - Board.YOrigin);
+          if endNo = 2 then
+          begin
+            ex := CoordToMMs(Trk.X2 - Board.XOrigin);
+            ey := CoordToMMs(Trk.Y2 - Board.YOrigin);
+          end
+          else
+          begin
+            ex := CoordToMMs(Trk.X1 - Board.XOrigin);
+            ey := CoordToMMs(Trk.Y1 - Board.YOrigin);
+          end;
+          // Quadrierter Abstand <= tol^2 (vermeidet Abs und Sqrt bewusst).
+          if ((ex - oxmm) * (ex - oxmm) + (ey - oymm) * (ey - oymm))
+               <= (tol * tol) then
+          begin
+            nhits := nhits + 1;
+            hit := Trk;
+          end;
         end;
-        if (Abs(ex - oxmm) <= tol) and (Abs(ey - oymm) <= tol) then
-        begin
-          nhits := nhits + 1;
-          hit := Trk;
-        end;
+        Trk := SpIter.NextPCBObject;
       end;
-      Trk := SpIter.NextPCBObject;
     end;
-  finally
-    Board.SpatialIterator_Destroy(SpIter);
+  except
+    nhits := 0;   // raeumliche Suche nicht verfuegbar -> als "kein Treffer"
   end;
+  if SpIter <> nil then
+    try Board.SpatialIterator_Destroy(SpIter); except end;
 
   if nhits = 1 then Result := hit;   // eindeutig -> sicher; sonst nil (auslassen)
 end;
@@ -288,37 +296,77 @@ var
   Trk, best : IPCB_Track;
   cx, cy, r : TCoord;
   bestD, d, ex, ey : Double;
+  have : Boolean;
 begin
   Result := nil;
   best := nil;
-  bestD := 1.0E30;
+  bestD := 0.0;
+  have := False;    // statt eines grossen Sentinel-Literals (DelphiScript-sicher)
   if Board = nil then Exit;
 
   cx := Board.XOrigin + MMsToCoord(xmm);
   cy := Board.YOrigin + MMsToCoord(ymm);
   r  := MMsToCoord(radmm);
 
-  SpIter := Board.SpatialIterator_Create;
+  SpIter := nil;
   try
-    SpIter.AddFilter_ObjectSet(MkSet(eTrackObject));
-    SpIter.AddFilter_Area(cx - r, cy - r, cx + r, cy + r);
-    Trk := SpIter.FirstPCBObject;
-    while Trk <> nil do
+    SpIter := Board.SpatialIterator_Create;
+    if SpIter <> nil then
     begin
-      ex := CoordToMMs(Trk.X1 - Board.XOrigin) - xmm;
-      ey := CoordToMMs(Trk.Y1 - Board.YOrigin) - ymm;
-      d  := ex * ex + ey * ey;                       // quadr. Abstand Endpunkt 1
-      ex := CoordToMMs(Trk.X2 - Board.XOrigin) - xmm;
-      ey := CoordToMMs(Trk.Y2 - Board.YOrigin) - ymm;
-      if (ex * ex + ey * ey) < d then d := ex * ex + ey * ey;  // ... vs Endpunkt 2
-      if d < bestD then begin bestD := d; best := Trk; end;
-      Trk := SpIter.NextPCBObject;
+      SpIter.AddFilter_ObjectSet(MkSet(eTrackObject));
+      SpIter.AddFilter_Area(cx - r, cy - r, cx + r, cy + r);
+      Trk := SpIter.FirstPCBObject;
+      while Trk <> nil do
+      begin
+        ex := CoordToMMs(Trk.X1 - Board.XOrigin) - xmm;
+        ey := CoordToMMs(Trk.Y1 - Board.YOrigin) - ymm;
+        d  := ex * ex + ey * ey;                     // quadr. Abstand Endpunkt 1
+        ex := CoordToMMs(Trk.X2 - Board.XOrigin) - xmm;
+        ey := CoordToMMs(Trk.Y2 - Board.YOrigin) - ymm;
+        if (ex * ex + ey * ey) < d then d := ex * ex + ey * ey;  // vs Endpunkt 2
+        if (not have) or (d < bestD) then
+        begin
+          bestD := d; best := Trk; have := True;
+        end;
+        Trk := SpIter.NextPCBObject;
+      end;
     end;
-  finally
-    Board.SpatialIterator_Destroy(SpIter);
+  except
+    best := nil;   // raeumliche Suche nicht verfuegbar -> kein Layerwechsel
   end;
+  if SpIter <> nil then
+    try Board.SpatialIterator_Destroy(SpIter); except end;
 
   Result := best;
+end;
+
+
+{ Prueft EINMAL, ob der raeumliche Iterator auf dieser Altium-Version zur        }
+{ Laufzeit laeuft (kleiner Iterator + ein Zugriff, in try/except gekapselt).     }
+{ ApplyFixes entscheidet damit im kalten Fall: raeumliche Suche (schnell) ODER,  }
+{ falls sie nicht laeuft, zur Sicherheit der alte Komplett-Neuaufbau.           }
+function ProbeSpatial(Dummy : Integer) : Boolean;
+var
+  SpIter : IPCB_SpatialIterator;
+  junk : IPCB_Track;
+begin
+  Result := False;
+  if Board = nil then Exit;
+  try
+    SpIter := Board.SpatialIterator_Create;
+    if SpIter <> nil then
+    begin
+      SpIter.AddFilter_ObjectSet(MkSet(eTrackObject));
+      SpIter.AddFilter_Area(Board.XOrigin, Board.YOrigin,
+                            Board.XOrigin + MMsToCoord(1.0),
+                            Board.YOrigin + MMsToCoord(1.0));
+      junk := SpIter.FirstPCBObject;    // ein Zugriff genuegt als Funktionstest
+      Board.SpatialIterator_Destroy(SpIter);
+      Result := True;
+    end;
+  except
+    Result := False;
+  end;
 end;
 
 
@@ -623,12 +671,13 @@ begin
 
   Iter := Board.BoardIterator_Create;
   Iter.AddFilter_ObjectSet(MkSet(eTrackObject));
-  // TOP/BOTTOM schon HIER ausschliessen (nicht erst je Track pruefen): der
-  // Iterator liefert diese Layer dann gar nicht mehr - spart bei mehrlagigen
-  // Boards die meiste Arbeit. AllLayers ist eine Menge, minus die zwei
-  // Aussenlagen. Der Check unten in der Schleife bleibt als Sicherheitsnetz,
-  // falls die Mengendifferenz auf einer Altium-Version nicht greifen sollte.
-  Iter.AddFilter_LayerSet(AllLayers - MkSet(eTopLayer, eBottomLayer));
+  // Alle Layer durchlaufen. TOP/BOTTOM werden weiter unten in der Schleife
+  // FRUEH uebersprungen - noch VOR der teuren Net-/String-/Add-Arbeit, also
+  // praktisch "beim Export raus". Ein echter Layer-Set-Filter am Iterator
+  // (AllLayers - MkSet(eTopLayer, eBottomLayer)) ist hier bewusst NICHT
+  // gesetzt: der Set-Differenz-Operator wirft in diesem DelphiScript den
+  // Fehler "Could not convert variant of type (OleStr) into type (Double)".
+  Iter.AddFilter_LayerSet(AllLayers);
   Iter.AddFilter_Method(eProcessAll);
 
   first        := True;
@@ -647,9 +696,10 @@ begin
     if (iterated mod 5000) = 0 then
     begin
       VCForm.LabelStatus.Caption :=
-        'Lese Innenlagen-Tracks ... bitte warten.' + #13#10#13#10 +
-        'Durchlaufen (TOP/BOTTOM schon am Iterator raus): ' + IntToStr(iterated) +
-        #13#10 + 'Exportiert (mit Net): ' + IntToStr(id);
+        'Lese Tracks ... bitte warten.' + #13#10#13#10 +
+        'Geprueft: ' + IntToStr(iterated) + #13#10 +
+        'Exportiert (mit Net, ohne TOP/BOTTOM): ' + IntToStr(id) + #13#10 +
+        'TOP/BOTTOM uebersprungen: ' + IntToStr(skippedLayer);
       try Application.ProcessMessages; except end;
     end;
 
@@ -734,22 +784,19 @@ begin
 
   RunApplyLoop(
     'Export fertig: ' + IntToStr(id) + ' Tracks (mit Net, ohne TOP/BOTTOM). ' +
-    'TOP/BOTTOM schon am Iterator ausgeschlossen (Sicherheitsnetz fing ' +
-    IntToStr(skippedLayer) + '), ohne Net ' + IntToStr(netless) + '.' +
-    #13#10#13#10 +
+    'Uebersprungen: TOP/BOTTOM ' + IntToStr(skippedLayer) +
+    ', ohne Net ' + IntToStr(netless) + '.' + #13#10#13#10 +
     'Der Browser-Report sollte offen sein (sonst start_watcher.bat starten). ' +
     'Jetzt die Fehler im Browser anklicken, dann hier "Aenderungen uebernehmen".');
 end;
 
 
 {------------------------------------------------------------------------------}
-{ OPTIONALER FALLBACK - wird im Normalbetrieb NICHT mehr aufgerufen.             }
-{ ApplyFixes braucht die Zuordnung nicht mehr neu aufzubauen (DoApply findet     }
-{ Tracks raeumlich ueber die Ursprungslage). Diese Funktion bleibt nur als       }
-{ Notnagel: Sollte die raeumliche Suche auf einer Altium-Version einmal nicht    }
-{ greifen, kann man sie hier wieder in ApplyFixes einhaengen. Sie iteriert das   }
-{ GANZE Board mit demselben Filter/derselben Reihenfolge wie der Export.         }
-{ Rueckgabe: True bei Erfolg.                                                   }
+{ FALLBACK - wird nur noch aufgerufen, wenn die raeumliche Suche auf dieser      }
+{ Altium-Version nicht laeuft (ProbeSpatial = False). Im Normalfall findet        }
+{ DoApply die Tracks raeumlich ueber die Ursprungslage, dann entfaellt dieser     }
+{ langsame Komplett-Neuaufbau. Iteriert das GANZE Board mit demselben Filter/     }
+{ derselben Reihenfolge wie der Export. Rueckgabe: True bei Erfolg.               }
 {------------------------------------------------------------------------------}
 function RebuildTrackList(Dummy : Integer) : Boolean;
 var
@@ -770,12 +817,13 @@ begin
   TrackReset(0);
   Iter := Board.BoardIterator_Create;
   Iter.AddFilter_ObjectSet(MkSet(eTrackObject));
-  // TOP/BOTTOM schon HIER ausschliessen (nicht erst je Track pruefen): der
-  // Iterator liefert diese Layer dann gar nicht mehr - spart bei mehrlagigen
-  // Boards die meiste Arbeit. AllLayers ist eine Menge, minus die zwei
-  // Aussenlagen. Der Check unten in der Schleife bleibt als Sicherheitsnetz,
-  // falls die Mengendifferenz auf einer Altium-Version nicht greifen sollte.
-  Iter.AddFilter_LayerSet(AllLayers - MkSet(eTopLayer, eBottomLayer));
+  // Alle Layer durchlaufen. TOP/BOTTOM werden weiter unten in der Schleife
+  // FRUEH uebersprungen - noch VOR der teuren Net-/String-/Add-Arbeit, also
+  // praktisch "beim Export raus". Ein echter Layer-Set-Filter am Iterator
+  // (AllLayers - MkSet(eTopLayer, eBottomLayer)) ist hier bewusst NICHT
+  // gesetzt: der Set-Differenz-Operator wirft in diesem DelphiScript den
+  // Fehler "Could not convert variant of type (OleStr) into type (Double)".
+  Iter.AddFilter_LayerSet(AllLayers);
   Iter.AddFilter_Method(eProcessAll);
   iterated := 0;
   runaway  := False;
@@ -825,6 +873,7 @@ end;
 {    Board gehoert - sonst wird sie einmal neu aufgebaut.                        }
 {------------------------------------------------------------------------------}
 procedure ApplyFixes;
+var coldMap : Boolean;
 begin
   Board := GetBoard(0);
   if Board = nil then Exit;
@@ -835,15 +884,22 @@ begin
   AckPath  := WorkDir + '\bridge_ack.txt';
   JumpPath := WorkDir + '\bridge_jump.txt';
 
-  // KEIN Neu-Iterieren mehr: Liegt die Zuordnung noch im Speicher (gleiches
-  // Board, z.B. nach "Fertig" in derselben Sitzung), nutzt DoApply sie als
-  // schnelle Abkuerzung. Ist sie weg (z.B. nach Altium-Neustart), findet
-  // DoApply die Tracks per raeumlicher Suche ueber die vom Server gelieferte
-  // Ursprungslage. In BEIDEN Faellen ist das Menue SOFORT da - der frueher
-  // noetige, minutenlange Neu-Aufbau (RebuildTrackList) entfaellt.
+  // Liegt die Zuordnung noch im Speicher (gleiches Board, z.B. nach "Fertig" in
+  // derselben Sitzung), nutzt DoApply sie als schnelle Abkuerzung - Menue sofort
+  // da. Ist sie weg (kalt, z.B. nach Altium-Neustart), findet DoApply die Tracks
+  // per raeumlicher Suche ueber die vom Server gelieferte Ursprungslage. Als
+  // Sicherheit wird EINMAL geprueft, ob die raeumliche Suche laeuft; falls nicht,
+  // faellt ApplyFixes auf den alten Komplett-Neuaufbau zurueck (langsam, aber
+  // funktioniert immer). So ist das Menue im Normalfall sofort da - und niemals
+  // schlechter als frueher.
+  coldMap := (BuiltForBoard <> Board) or (TrackCount = 0);
+  if coldMap then
+    if not ProbeSpatial(0) then
+      if not RebuildTrackList(0) then Exit;
+
   RunApplyLoop(
-    'Menue erneut geoeffnet (kein neuer Export, kein Neu-Einlesen). Im Browser ' +
-    'die Fehler anklicken, dann "Aenderungen uebernehmen" - oder "Fertig".');
+    'Menue erneut geoeffnet (kein neuer Export). Im Browser die Fehler ' +
+    'anklicken, dann "Aenderungen uebernehmen" - oder "Fertig".');
 end;
 
 end.
