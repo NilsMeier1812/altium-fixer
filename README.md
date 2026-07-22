@@ -56,6 +56,37 @@ beim Export weglassen: in `RunVerbindungsCheck` in der Track-Schleife die
 
 ## Einmalige Einrichtung
 
+### Schnellstart: automatisches Setup (empfohlen)
+
+Für die meiste Arbeit gibt es ein **Setup-Skript**, das fast alles allein
+erledigt: Python prüfen/installieren, Git prüfen/installieren, das Repo nach
+`C:\altium-track-fixer` holen, die Excel-Pakete installieren, den Watcher in
+den Autostart legen **und** einmal starten.
+
+**So geht's (neuer Rechner):**
+
+1. **`setup.bat`** aus dem Repo herunterladen (nur diese eine Datei nötig – sie
+   holt sich `setup.ps1` bei Bedarf selbst von GitHub).
+2. **Doppelklick** auf `setup.bat`. Bei der Windows-Nachfrage **„Ja"** klicken
+   (Administrator-Rechte werden für die Installationen gebraucht).
+3. Warten, bis „FERTIG" erscheint.
+
+Alternativ, wenn das Repo schon lokal liegt, direkt **Rechtsklick auf
+`setup.ps1` → „Mit PowerShell ausführen"**.
+
+Das Skript nutzt **winget** (auf Windows 10 21H2+/11 vorhanden) für die
+Installationen und fällt sonst automatisch auf Direkt-Downloads zurück.
+
+> **Der eine Schritt, der von Hand bleibt:** Das Einbinden des Skriptprojekts
+> **in Altium** (unten Schritt 3) läuft in der Altium-GUI und lässt sich von
+> außen nicht automatisieren. Das Setup zeigt diesen Schritt am Ende noch
+> einmal an. Alles andere ist danach erledigt.
+
+Wer lieber jeden Schritt selbst macht (oder kein Windows nutzt), folgt der
+manuellen Anleitung unten.
+
+---
+
 ### 1. Python
 Python 3.8+ installieren (bei der Windows-Installation **„Add Python to PATH"**
 anhaken). Prüfen:
@@ -259,6 +290,8 @@ Partner-Logik ab.
 ## Aufbau
 
 ```
+setup.bat                   Ein-Klick-Einrichtung (Starter): elevated + ruft setup.ps1
+setup.ps1                   Automatisches Setup (Python/Git/Repo/Autostart/Watcher)
 verbindungs_check/core.py   Analyse, Fix-Berechnung (compute_fix), HTML/SVG
 check_server.py             Server (stdlib): HTTP für Browser + Datei-Bridge zu Altium
                             (--watch = dauerhaft, öffnet Report automatisch)
